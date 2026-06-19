@@ -1,0 +1,12 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+*.user
+
+# Self-test artifact
+selftest.out
+
+# ML model + tokenizer are large binaries — fetched via scripts/fetch-model.ps1,
+# not committed. (model.onnx ~90MB.)
+src/models/*.onnx
+src/models/vocab.txt

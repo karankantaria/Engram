@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>engram</AssemblyName>
+    <RootNamespace>Engram</RootNamespace>
+    <Version>0.1.0</Version>
+    <ApplicationIcon></ApplicationIcon>
+    <!-- Single-file publish target: win-x64 self-contained. Web assets + model
+         are extracted alongside the exe on first run (see AssetManager). -->
+    <RuntimeIdentifier Condition="'$(PublishSingleFile)' == 'true'">win-x64</RuntimeIdentifier>
+    <SelfContained Condition="'$(PublishSingleFile)' == 'true'">true</SelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.27.0" />
+    <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4022.49" />
+  </ItemGroup>
+
+  <!-- Web frontend assets: embedded so they survive single-file publish.
+       Extracted to a temp folder at runtime and served via a virtual host. -->
+  <ItemGroup>
+    <EmbeddedResource Include="web\**\*" >
+      <LogicalName>web/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <!-- The ONNX model + tokenizer vocab are large; keep them as loose content
+       next to the exe rather than embedding (avoids bloating the managed assembly
+       and lets us swap models without a rebuild). Copied if present. -->
+  <ItemGroup>
+    <None Include="models\**\*" CopyToOutputDirectory="PreserveNewest" Condition="Exists('models')" />
+  </ItemGroup>
+
+</Project>

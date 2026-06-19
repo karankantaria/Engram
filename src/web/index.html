@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>engram</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Capture bar: terminal prompt -->
+  <div id="capturebar">
+    <span class="prompt">engram&gt;</span>
+    <textarea id="capture" rows="1" autocomplete="off" spellcheck="false"
+      placeholder="dump a thought… (Enter to save · Shift+Enter for newline)"></textarea>
+    <span id="backend" class="backend"></span>
+  </div>
+
+  <div id="main">
+    <!-- Graph -->
+    <div id="graphpane">
+      <div id="graph"></div>
+      <div id="legend"></div>
+      <div id="statusline"></div>
+    </div>
+
+    <!-- Sidebar -->
+    <div id="sidebar">
+      <div id="toolbar">
+        <input id="search" type="text" placeholder="/ semantic search" autocomplete="off" spellcheck="false" />
+        <button id="btn-librarian" title="Ask Claude to name clusters & suggest links">⟳ librarian</button>
+        <button id="btn-export" title="Export all notes to a zip">⤓ export</button>
+      </div>
+
+      <div id="searchresults" class="panel hidden"></div>
+
+      <div id="reader" class="panel hidden">
+        <div class="reader-head">
+          <span id="reader-title"></span>
+          <span class="reader-actions">
+            <button id="btn-save" title="Save edits">save</button>
+            <button id="btn-delete" title="Delete note">del</button>
+            <button id="btn-close" title="Close">✕</button>
+          </span>
+        </div>
+        <div id="reader-meta"></div>
+        <textarea id="reader-body" spellcheck="false"></textarea>
+      </div>
+
+      <div id="suggestions" class="panel"></div>
+      <div id="clusters" class="panel"></div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script src="vendor/force-graph.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
