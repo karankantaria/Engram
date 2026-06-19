@@ -24,8 +24,37 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        FitToScreen();
         Loaded += OnLoaded;
         Closing += OnClosing;
+    }
+
+    /// <summary>Open at a size that fits the current screen's work area, so the
+    /// window never bleeds off the edge on small or unusual-aspect displays.</summary>
+    private void FitToScreen()
+    {
+        var wa = SystemParameters.WorkArea;
+        MaxWidth = wa.Width;
+        MaxHeight = wa.Height;
+        Width = Math.Min(Width, wa.Width * 0.94);
+        Height = Math.Min(Height, wa.Height * 0.94);
+    }
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        if (System.Windows.PresentationSource.FromVisual(this) is System.Windows.Interop.HwndSource src)
+            src.AddHook(WindowProc);
+    }
+
+    private IntPtr WindowProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == MaximizeToWorkArea.WM_GETMINMAXINFO)
+        {
+            MaximizeToWorkArea.Handle(hwnd, lParam);
+            handled = true;
+        }
+        return IntPtr.Zero;
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)

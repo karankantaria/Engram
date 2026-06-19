@@ -15,6 +15,10 @@
          are extracted alongside the exe on first run (see AssetManager). -->
     <RuntimeIdentifier Condition="'$(PublishSingleFile)' == 'true'">win-x64</RuntimeIdentifier>
     <SelfContained Condition="'$(PublishSingleFile)' == 'true'">true</SelfContained>
+    <!-- Bundle native libs (onnxruntime, sqlite, wpf native) into the exe and
+         self-extract at runtime, so distribution is just engram.exe + models\. -->
+    <IncludeNativeLibrariesForSelfExtract Condition="'$(PublishSingleFile)' == 'true'">true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile Condition="'$(PublishSingleFile)' == 'true'">true</EnableCompressionInSingleFile>
   </PropertyGroup>
 
   <ItemGroup>
