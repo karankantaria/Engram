@@ -133,7 +133,7 @@ function animateMode() {
     const t = now / 1000;
     const amp = FLOAT_AMP * pulse; // float radius, fades with ambient
     for (const n of Graph.graphData().nodes) {
-      if (n === draggingNode || n.bx == null) continue;
+      if (n === draggingNode || !Number.isFinite(n.bx)) continue;
       n.x = n.bx + Math.sin(t * n.f1 + n.ph) * amp;
       n.y = n.by + Math.cos(t * n.f2 + n.ph * 1.3) * amp;
     }
@@ -144,6 +144,9 @@ function animateMode() {
 // Capture each node's settled "home" + a unique drift phase/frequency.
 function captureHome() {
   for (const n of Graph.graphData().nodes) {
+    // Guard against a non-finite position (would make the node vanish and
+    // break zoomToFit's bounding box).
+    if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) { n.x = 0; n.y = 0; }
     n.bx = n.x;
     n.by = n.y;
     if (n.ph == null) {
@@ -153,7 +156,9 @@ function captureHome() {
     }
   }
   settled = true;
+  if (fitOnSettle) { fitOnSettle = false; setTimeout(() => Graph && Graph.zoomToFit(400, 50), 60); }
 }
+let fitOnSettle = true; // fit once after the next layout settles (initial load + filter changes)
 
 // Node radius scales with the note's content size. Square-root scaling so the
 // node *area* tracks data volume (4x the data ≈ 2x the radius), clamped.
@@ -187,6 +192,36 @@ function makeCollideForce(pad) {
           }
         }
       }
+    }
+  }
+  force.initialize = (n) => { nodes = n; };
+  return force;
+}
+
+// Per-cluster anchor positions (a ring that grows with the cluster count), so
+// clusters settle into distinct regions instead of collapsing onto each other.
+let clusterAnchors = {};
+function computeClusterAnchors(nodes) {
+  const ids = [...new Set(nodes.map((n) => n.cluster ?? 0))];
+  clusterAnchors = {};
+  const R = 90 + ids.length * 55; // ring radius scales with how many clusters
+  ids.forEach((cid, i) => {
+    if (ids.length <= 1) { clusterAnchors[cid] = { x: 0, y: 0 }; return; }
+    const ang = (2 * Math.PI * i) / ids.length;
+    clusterAnchors[cid] = { x: Math.cos(ang) * R, y: Math.sin(ang) * R };
+  });
+}
+
+// Pulls each node gently toward its cluster's anchor → grouped, separated blobs.
+function makeClusterForce() {
+  let nodes = [];
+  function force(alpha) {
+    const k = 0.13 * alpha;
+    for (const n of nodes) {
+      const a = clusterAnchors[n.cluster ?? 0];
+      if (!a) continue;
+      n.vx += (a.x - n.x) * k;
+      n.vy += (a.y - n.y) * k;
     }
   }
   force.initialize = (n) => { nodes = n; };
@@ -310,6 +345,14 @@ function initGraph() {
       Graph.linkDirectionalParticles(particleAccessor);
     });
 
+  // Layout tuning: more repulsion + longer (similarity-scaled) links so nodes
+  // don't pile up, plus per-cluster anchoring so clusters spread into regions.
+  const charge = Graph.d3Force("charge");
+  if (charge) charge.strength(-95).distanceMax(380);
+  const link = Graph.d3Force("link");
+  if (link) link.distance((l) => 28 + (1 - (l.weight || 0)) * 34);
+  Graph.d3Force("cluster", makeClusterForce());
+
   // Size-aware collision so big (data-heavy) nodes don't overlap. Runs during
   // the layout phase, so the captured "home" positions are already spaced; the
   // padding leaves headroom for the idle float drift.
@@ -335,9 +378,17 @@ function sizeGraph() {
 }
 
 // Reset / fit the whole graph back into view (after panning/zooming away).
+// Also recovers a blank graph: if nothing is shown but notes exist, clear any
+// filter and re-fit.
 function resetView() {
   if (!Graph) return;
   markActivity();
+  const shown = Graph.graphData().nodes.length;
+  if (shown === 0 && lastGraph.nodes.length > 0) {
+    resetFilter(); // un-stick a stale/empty filter
+    setTimeout(() => Graph.zoomToFit(500, 40), 120);
+    return;
+  }
   Graph.zoomToFit(500, 40);
 }
 $("btn-reset-view").onclick = resetView;
@@ -351,6 +402,11 @@ function renderGraph(g) {
 // Build the displayed subgraph from the full graph + current filter state.
 function applyFilter() {
   const g = lastGraph;
+  // Drop a stale cluster focus (cluster ids get renumbered on reindex, e.g.
+  // after capture / accept-merge / librarian) so the graph never goes blank.
+  if (clusterFilter != null && !g.nodes.some((n) => n.cluster === clusterFilter)) {
+    clusterFilter = null;
+  }
   let nodes = g.nodes;
   if (clusterFilter != null) nodes = nodes.filter((n) => n.cluster === clusterFilter);
 
@@ -369,6 +425,7 @@ function applyFilter() {
   highlightLinks.clear();
   settled = false;       // re-layout the filtered set, then re-home
   draggingNode = null;
+  computeClusterAnchors(nodes);
   Graph.graphData({
     nodes: nodes.map((n) => ({ ...n })),
     links: links.map((l) => ({ source: l.source, target: l.target, weight: l.weight })),
@@ -381,9 +438,18 @@ function applyFilter() {
   updateFilterBar();
 }
 
-function focusCluster(id) { clusterFilter = id; applyFilter(); }
-function resetFilter() { clusterFilter = null; hideOrphans = false; applyFilter(); }
-function toggleOrphans() { hideOrphans = !hideOrphans; applyFilter(); }
+// Filter changes refit the view (the subset re-lays-out around the origin, so
+// the camera must follow or the result looks blank/off-screen).
+function focusCluster(id) { clusterFilter = id; changeFilter(); }
+function resetFilter() { clusterFilter = null; hideOrphans = false; changeFilter(); }
+function toggleOrphans() { hideOrphans = !hideOrphans; changeFilter(); }
+
+function changeFilter() {
+  fitOnSettle = true;          // refine-fit once the new layout settles
+  applyFilter();
+  // early fit so the subset is framed immediately (initial positions exist now)
+  setTimeout(() => { if (Graph && Graph.graphData().nodes.length) Graph.zoomToFit(350, 50); }, 220);
+}
 
 function updateFilterBar() {
   const bar = $("filterbar");
