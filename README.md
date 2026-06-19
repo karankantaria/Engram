@@ -32,10 +32,9 @@ your machine unless you press a Claude button or export.
 
 | The graph | Capture & read |
 |:---:|:---:|
-| ![graph](docs/screenshots/graph.png) | ![capture](docs/screenshots/capture.png) |
-| **Ask your notes** | **Clusters** |
-| ![ask](docs/screenshots/ask.png) | ![clusters](docs/screenshots/clusters.png) |
-
+| ![graph](docs/screenshots/graph.png) | 
+| **Ask your notes** |
+| ![ask](docs/screenshots/ask.png) 
 ## Features
 
 - 🧠 **Frictionless capture** — a terminal prompt; `Enter` saves. Summon anywhere with **Ctrl+Alt+Space**.
