@@ -30,8 +30,8 @@ your machine unless you press a Claude button or export.
 
 <!-- Add your own PNGs to docs/screenshots/ (see docs/screenshots/README.md). -->
 
-| The graph | Capture & read |
-|:---:|:---:|
+| The graph | 
+|:---:|
 | ![graph](docs/screenshots/graph.png) | 
 | **Ask your notes** |
 | ![ask](docs/screenshots/ask.png) 
