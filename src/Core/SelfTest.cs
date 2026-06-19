@@ -90,7 +90,18 @@ internal static class SelfTest
             sb.AppendLine();
             sb.AppendLine($"todos (local)    : {localCount} found; 'buy milk' done after toggle = {milkDone}");
 
-            bool ok = after > before && imp.notes >= 4 && localCount == 3 && milkDone;
+            // Spaced repetition: all notes start due (never reviewed); rating
+            // one "good" should schedule it out and drop the due count.
+            var review = new ReviewService(db);
+            int dueBefore = review.DueCount();
+            var dueList = review.GetDue(5);
+            if (dueList.Count > 0) review.Rate(dueList[0].id, "good");
+            int dueAfter = review.DueCount();
+            sb.AppendLine();
+            sb.AppendLine($"resurface        : {dueBefore} due → {dueAfter} after rating one 'good'");
+
+            bool ok = after > before && imp.notes >= 4 && localCount == 3 && milkDone
+                      && dueBefore > 0 && dueAfter == dueBefore - 1;
             sb.AppendLine();
             sb.AppendLine(ok ? "RESULT: PASS" : "RESULT: FAIL");
         }

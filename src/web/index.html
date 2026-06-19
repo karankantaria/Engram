@@ -20,6 +20,7 @@
     <div id="graphpane">
       <div id="graph"></div>
       <div id="legend"></div>
+      <div id="filterbar" class="hidden"></div>
       <div id="statusline"></div>
     </div>
 
@@ -52,6 +53,7 @@
         <textarea id="reader-body" class="hidden" spellcheck="false"></textarea>
       </div>
 
+      <div id="review" class="panel"></div>
       <div id="todos" class="panel"></div>
       <div id="suggestions" class="panel"></div>
       <div id="clusters" class="panel"></div>
@@ -59,6 +61,24 @@
   </div>
 
   <div id="toast"></div>
+
+  <!-- Command palette (Ctrl+K) -->
+  <div id="palette" class="overlay hidden">
+    <div class="palette-box">
+      <input id="palette-input" type="text" autocomplete="off" spellcheck="false"
+        placeholder="jump to a note or run a command…" />
+      <div id="palette-list"></div>
+    </div>
+  </div>
+
+  <!-- Quiz overlay -->
+  <div id="quiz" class="overlay hidden">
+    <div class="quiz-box">
+      <div id="quiz-head"></div>
+      <div id="quiz-card"></div>
+      <div id="quiz-actions"></div>
+    </div>
+  </div>
 
   <script src="vendor/force-graph.min.js"></script>
   <script src="vendor/marked.min.js"></script>

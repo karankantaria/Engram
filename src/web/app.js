@@ -40,6 +40,7 @@ function applyImport(payload) {
     renderGraph(payload.graph);
     renderClustersPanel(payload.graph.clusters);
     refreshTodos();
+    refreshReview();
   }
   const r = payload.result;
   if (r) toast(`imported ${r.notes} notes from ${r.files} files` + (r.skipped ? ` · ${r.skipped} skipped` : ""));
@@ -51,10 +52,13 @@ const capture = $("capture");
 const searchInput = $("search");
 let Graph = null;
 let currentNoteId = null;
-let lastGraph = { nodes: [], links: [], clusters: [] };
+let lastGraph = { nodes: [], links: [], clusters: [] }; // full graph (all notes)
+let clusterFilter = null;   // when set, only this cluster's subgraph is shown
+let hideOrphans = false;     // hide notes with no links
 
 // ---- graph mode: 'idle' (ambient neural firing) vs 'browse' (calm/interactive)
 const IDLE_AFTER_MS = 7000;
+const FLOAT_AMP = 11;    // idle float radius in graph units
 let mode = "idle";
 let pulse = 1;            // eased 1=idle … 0=browse: drives glow, float, particle fade
 let lastActivity = 0;
@@ -104,7 +108,7 @@ function animateMode() {
 
   if (Graph && settled && pulse > 0.004) {
     const t = now / 1000;
-    const amp = 11 * pulse; // float radius in graph units, fades with ambient
+    const amp = FLOAT_AMP * pulse; // float radius, fades with ambient
     for (const n of Graph.graphData().nodes) {
       if (n === draggingNode || n.bx == null) continue;
       n.x = n.bx + Math.sin(t * n.f1 + n.ph) * amp;
@@ -133,6 +137,37 @@ function captureHome() {
 function nodeRadius(node) {
   const len = node.size || 0;
   return Math.max(3, Math.min(16, 3 + Math.sqrt(len) / 4));
+}
+
+// A simple radius-aware collision force (d3-compatible) — pushes overlapping
+// nodes apart, scaled by each node's data-driven radius plus padding.
+function makeCollideForce(pad) {
+  let nodes = [];
+  const strength = 0.85;
+  const iterations = 2;
+  function force() {
+    for (let it = 0; it < iterations; it++) {
+      for (let i = 0; i < nodes.length; i++) {
+        const a = nodes[i];
+        const ra = nodeRadius(a);
+        for (let j = i + 1; j < nodes.length; j++) {
+          const b = nodes[j];
+          let dx = b.x - a.x, dy = b.y - a.y;
+          const minD = ra + nodeRadius(b) + pad;
+          let d2 = dx * dx + dy * dy;
+          if (d2 > 0 && d2 < minD * minD) {
+            const d = Math.sqrt(d2);
+            const shift = ((minD - d) / d) * strength * 0.5;
+            const ox = dx * shift, oy = dy * shift;
+            a.x -= ox; a.y -= oy;
+            b.x += ox; b.y += oy;
+          }
+        }
+      }
+    }
+  }
+  force.initialize = (n) => { nodes = n; };
+  return force;
 }
 
 // ---- toast ------------------------------------------------------------
@@ -250,6 +285,11 @@ function initGraph() {
       Graph.linkDirectionalParticles(particleAccessor);
     });
 
+  // Size-aware collision so big (data-heavy) nodes don't overlap. Runs during
+  // the layout phase, so the captured "home" positions are already spaced; the
+  // padding leaves headroom for the idle float drift.
+  Graph.d3Force("collide", makeCollideForce(FLOAT_AMP + 4));
+
   Graph.cooldownTime(2500);     // settle the layout fairly quickly, then float
   Graph.resumeAnimation();      // keep the render loop running so fades never freeze
 
@@ -270,22 +310,58 @@ function sizeGraph() {
 }
 
 function renderGraph(g) {
-  lastGraph = g;
-  // Stale highlights reference old link objects after a data swap.
+  lastGraph = g; // keep the full graph (palette, cluster detail use it)
+  renderLegend(g.clusters);
+  applyFilter();
+}
+
+// Build the displayed subgraph from the full graph + current filter state.
+function applyFilter() {
+  const g = lastGraph;
+  let nodes = g.nodes;
+  if (clusterFilter != null) nodes = nodes.filter((n) => n.cluster === clusterFilter);
+
+  let idset = new Set(nodes.map((n) => n.id));
+  let links = g.links.filter((l) => idset.has(l.source) && idset.has(l.target));
+
+  if (hideOrphans) {
+    const connected = new Set();
+    links.forEach((l) => { connected.add(l.source); connected.add(l.target); });
+    nodes = nodes.filter((n) => connected.has(n.id));
+    idset = new Set(nodes.map((n) => n.id));
+    links = links.filter((l) => idset.has(l.source) && idset.has(l.target));
+  }
+
   highlightNodes.clear();
   highlightLinks.clear();
-  // New data → let the engine re-lay-out, then re-home on the next stop.
-  settled = false;
+  settled = false;       // re-layout the filtered set, then re-home
   draggingNode = null;
-  // force-graph mutates link source/target into objects; clone for safety.
   Graph.graphData({
-    nodes: g.nodes.map((n) => ({ ...n })),
-    links: g.links.map((l) => ({ source: l.source, target: l.target, weight: l.weight })),
+    nodes: nodes.map((n) => ({ ...n })),
+    links: links.map((l) => ({ source: l.source, target: l.target, weight: l.weight })),
   });
   Graph.resumeAnimation();
-  renderLegend(g.clusters);
+
+  const filtered = clusterFilter != null || hideOrphans;
   $("statusline").textContent =
-    `${g.nodes.length} notes · ${g.links.length} links · ${g.clusters.length} clusters`;
+    `${nodes.length}${filtered ? `/${g.nodes.length}` : ""} notes · ${links.length} links · ${g.clusters.length} clusters`;
+  updateFilterBar();
+}
+
+function focusCluster(id) { clusterFilter = id; applyFilter(); }
+function resetFilter() { clusterFilter = null; hideOrphans = false; applyFilter(); }
+function toggleOrphans() { hideOrphans = !hideOrphans; applyFilter(); }
+
+function updateFilterBar() {
+  const bar = $("filterbar");
+  if (clusterFilter == null && !hideOrphans) { bar.classList.add("hidden"); return; }
+  bar.classList.remove("hidden");
+  const c = lastGraph.clusters.find((x) => x.id === clusterFilter);
+  const bits = [];
+  if (c) bits.push(`focus: ${esc(c.name)}`);
+  if (hideOrphans) bits.push("orphans hidden");
+  bar.innerHTML = `<span>${bits.join(" · ")}</span> <span class="mini-link" id="filter-reset">show all ✕</span>`;
+  $("filter-reset").onclick = resetFilter;
 }
 
 function renderLegend(clusters) {
@@ -324,6 +400,8 @@ function openClusterDetail(c) {
     `<div class="panel-title">cluster <span class="mini-link" id="cv-close">close ✕</span></div>` +
     `<div class="cv-head"><span class="swatch" style="background:${c.color}"></span>` +
     `<span class="cv-name">${esc(c.name)}</span>` +
+    `<span class="mini-link" id="cv-focus">focus</span>` +
+    `<span class="mini-link" id="cv-quiz">quiz</span>` +
     `<span class="mini-link" id="cv-rename">rename</span></div>` +
     (c.summary
       ? `<div class="cv-summary">${esc(c.summary)}</div>`
@@ -335,6 +413,8 @@ function openClusterDetail(c) {
   el.innerHTML = html;
   $("cv-close").onclick = () => el.classList.add("hidden");
   $("cv-rename").onclick = () => renameCluster(c);
+  $("cv-focus").onclick = () => { focusCluster(c.id); el.classList.add("hidden"); };
+  $("cv-quiz").onclick = () => { el.classList.add("hidden"); startQuiz(c.id, c.name); };
   el.querySelectorAll(".cv-note").forEach((node) => {
     node.onclick = () => {
       const id = Number(node.getAttribute("data-id"));
@@ -383,6 +463,7 @@ capture.addEventListener("keydown", async (e) => {
       renderGraph(r.graph);
       renderClustersPanel(r.graph.clusters);
       refreshTodos();
+      refreshReview();
       toast("captured · " + (r.note ? r.note.title : ""));
     } catch (err) {
       toast("error: " + err.message);
@@ -444,6 +525,7 @@ $("btn-delete").onclick = async () => {
   renderGraph(r.graph);
   renderClustersPanel(r.graph.clusters);
   refreshTodos();
+  refreshReview();
   toast("deleted");
 };
 
@@ -648,6 +730,42 @@ async function refreshTodos() {
   try { renderTodos(await rpc("todos")); } catch {}
 }
 
+// ---- spaced-repetition resurfacing ------------------------------------
+function renderReview(items) {
+  const el = $("review");
+  let html = `<div class="panel-title">resurface ${items.length ? `· ${items.length} due ` : ""}</div>`;
+  if (!items.length) {
+    el.innerHTML = html + `<div class="empty">nothing due — you're caught up</div>`;
+    return;
+  }
+  items.forEach((it) => {
+    html +=
+      `<div class="rev" data-id="${it.id}">` +
+      `<div class="rev-title" style="color:${it.color}">${esc(it.title)}</div>` +
+      `<div class="row-sub">${esc(it.snippet)}</div>` +
+      `<div class="rev-actions">` +
+      `<button data-g="again" title="see again soon">again</button>` +
+      `<button data-g="good">good</button>` +
+      `<button data-g="easy" title="push further out">easy</button>` +
+      `</div></div>`;
+  });
+  el.innerHTML = html;
+  el.querySelectorAll(".rev").forEach((div) => {
+    const id = Number(div.getAttribute("data-id"));
+    div.querySelector(".rev-title").onclick = () => { openNote(id); focusNode(id); };
+    div.querySelectorAll(".rev-actions button").forEach((b) => {
+      b.onclick = async () => {
+        const items2 = await rpc("rateReview", { id, grade: b.getAttribute("data-g") });
+        renderReview(items2);
+      };
+    });
+  });
+}
+
+async function refreshReview() {
+  try { renderReview(await rpc("review")); } catch {}
+}
+
 // ---- suggestions ------------------------------------------------------
 function renderSuggestions(suggestions) {
   const el = $("suggestions");
@@ -701,6 +819,177 @@ function fmtDate(iso) {
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
 }
 
+// ---- command palette (Ctrl+K) ----------------------------------------
+const paletteEl = $("palette");
+const paletteInput = $("palette-input");
+let paletteItems = [];
+let paletteSel = 0;
+
+const COMMANDS = [
+  { label: "Capture a note", hint: "new", run: () => capture.focus() },
+  { label: "Ask Claude a question", hint: "ask", run: () => searchInput.focus() },
+  { label: "Run librarian (name + summarize clusters)", hint: "claude", run: () => $("btn-librarian").click() },
+  { label: "Scan notes for tasks", hint: "claude", run: () => scanTodos() },
+  { label: "Quiz me on a cluster", hint: "claude", run: () => startQuiz(null) },
+  { label: "Review due notes", hint: "study", run: () => $("review")?.scrollIntoView({ behavior: "smooth" }) },
+  { label: "Import files", hint: "", run: () => $("btn-import").click() },
+  { label: "Export to zip", hint: "", run: () => $("btn-export").click() },
+  { label: "Show all (clear graph filter)", hint: "graph", run: () => resetFilter() },
+  { label: "Toggle orphan notes", hint: "graph", run: () => toggleOrphans() },
+];
+
+// Subsequence fuzzy score; -1 = no match, higher = better.
+function fuzzy(q, text) {
+  if (!q) return 0.0001;
+  q = q.toLowerCase();
+  text = (text || "").toLowerCase();
+  let ti = 0, score = 0, streak = 0;
+  for (const c of q) {
+    let found = -1;
+    for (let k = ti; k < text.length; k++) if (text[k] === c) { found = k; break; }
+    if (found < 0) return -1;
+    streak = found === ti ? streak + 1 : 0;
+    score += 1 + streak * 0.5 - (found - ti) * 0.02;
+    ti = found + 1;
+  }
+  return score;
+}
+
+function openPalette() {
+  paletteEl.classList.remove("hidden");
+  paletteInput.value = "";
+  buildPalette("");
+  paletteInput.focus();
+}
+function closePalette() { paletteEl.classList.add("hidden"); }
+
+function buildPalette(q) {
+  const results = [];
+  COMMANDS.forEach((c) => {
+    const s = fuzzy(q, c.label);
+    if (s >= 0) results.push({ label: c.label, hint: c.hint, score: s + 0.2, run: c.run });
+  });
+  lastGraph.nodes.forEach((n) => {
+    const s = fuzzy(q, n.title);
+    if (s >= 0) results.push({ label: n.title, hint: "note", color: n.color, score: s, run: () => { openNote(n.id); focusNode(n.id); } });
+  });
+  results.sort((a, b) => b.score - a.score);
+  paletteItems = results.slice(0, 40);
+  paletteSel = 0;
+  renderPalette();
+}
+
+function renderPalette() {
+  const list = $("palette-list");
+  if (paletteItems.length === 0) { list.innerHTML = `<div class="empty">no matches</div>`; return; }
+  list.innerHTML = paletteItems.map((it, i) =>
+    `<div class="pal-item ${i === paletteSel ? "sel" : ""}" data-i="${i}">` +
+    `<span class="pal-dot" style="background:${it.color || "transparent"}"></span>` +
+    `<span class="pal-label">${esc(it.label)}</span>` +
+    `<span class="pal-hint">${esc(it.hint || "")}</span></div>`).join("");
+  list.querySelectorAll(".pal-item").forEach((el) => {
+    el.onclick = () => runPalette(Number(el.getAttribute("data-i")));
+  });
+}
+
+function runPalette(i) {
+  const it = paletteItems[i];
+  if (!it) return;
+  closePalette();
+  it.run();
+}
+
+paletteInput.addEventListener("input", () => buildPalette(paletteInput.value.trim()));
+paletteInput.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { e.preventDefault(); paletteSel = Math.min(paletteSel + 1, paletteItems.length - 1); renderPalette(); scrollPaletteSel(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); paletteSel = Math.max(paletteSel - 1, 0); renderPalette(); scrollPaletteSel(); }
+  else if (e.key === "Enter") { e.preventDefault(); runPalette(paletteSel); }
+  else if (e.key === "Escape") { e.preventDefault(); closePalette(); }
+});
+function scrollPaletteSel() {
+  const el = $("palette-list").querySelector(".pal-item.sel");
+  if (el) el.scrollIntoView({ block: "nearest" });
+}
+paletteEl.onclick = (e) => { if (e.target === paletteEl) closePalette(); };
+
+window.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+    e.preventDefault();
+    paletteEl.classList.contains("hidden") ? openPalette() : closePalette();
+  } else if (e.key === "Escape") {
+    if (!paletteEl.classList.contains("hidden")) closePalette();
+    if (!$("quiz").classList.contains("hidden")) closeQuiz();
+  }
+});
+
+// ---- quiz / flashcards ------------------------------------------------
+let quizCards = [];
+let quizIdx = 0;
+let quizRevealed = false;
+let quizCluster = null;
+
+function closeQuiz() { $("quiz").classList.add("hidden"); }
+
+async function startQuiz(clusterId, clusterName) {
+  const overlay = $("quiz");
+  overlay.classList.remove("hidden");
+  // No cluster chosen → show a picker of clusters.
+  if (clusterId == null) {
+    const picks = lastGraph.clusters.filter((c) => c.count > 0);
+    $("quiz-head").textContent = "quiz — pick a cluster";
+    $("quiz-card").innerHTML = picks.length
+      ? picks.map((c) => `<div class="quiz-pick" data-id="${c.id}" data-name="${esc(c.name)}"><span class="swatch" style="background:${c.color}"></span>${esc(c.name)} <span class="cluster-count">${c.count}</span></div>`).join("")
+      : `<div class="empty">no clusters yet</div>`;
+    $("quiz-actions").innerHTML = `<button id="quiz-close">close</button>`;
+    $("quiz-close").onclick = closeQuiz;
+    $("quiz-card").querySelectorAll(".quiz-pick").forEach((el) => {
+      el.onclick = () => startQuiz(Number(el.getAttribute("data-id")), el.getAttribute("data-name"));
+    });
+    return;
+  }
+
+  quizCluster = clusterId;
+  $("quiz-head").textContent = `quiz — ${clusterName || "cluster"}`;
+  $("quiz-card").innerHTML = `<div class="thinking">generating cards… (claude)</div>`;
+  $("quiz-actions").innerHTML = "";
+  try {
+    const r = await rpc("quiz", { clusterId });
+    quizCards = r.cards || [];
+    quizIdx = 0;
+    quizRevealed = false;
+    if (quizCards.length === 0) {
+      $("quiz-card").innerHTML = `<div class="empty">${esc(r.error || "no cards generated")}</div>`;
+      $("quiz-actions").innerHTML = `<button id="quiz-close">close</button>`;
+      $("quiz-close").onclick = closeQuiz;
+      return;
+    }
+    renderQuizCard();
+  } catch (err) {
+    $("quiz-card").innerHTML = `<div class="empty">error: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderQuizCard() {
+  const card = quizCards[quizIdx];
+  $("quiz-head").textContent = `card ${quizIdx + 1} / ${quizCards.length}`;
+  $("quiz-card").innerHTML =
+    `<div class="quiz-q">${esc(card.question)}</div>` +
+    (quizRevealed ? `<div class="quiz-a">${esc(card.answer)}</div>` : "");
+  if (!quizRevealed) {
+    $("quiz-actions").innerHTML = `<button id="quiz-reveal">reveal</button><button id="quiz-close">close</button>`;
+    $("quiz-reveal").onclick = () => { quizRevealed = true; renderQuizCard(); };
+  } else {
+    const last = quizIdx === quizCards.length - 1;
+    $("quiz-actions").innerHTML =
+      `<button id="quiz-next">${last ? "finish" : "next"}</button><button id="quiz-close">close</button>`;
+    $("quiz-next").onclick = () => {
+      if (last) { closeQuiz(); toast("quiz complete"); return; }
+      quizIdx++; quizRevealed = false; renderQuizCard();
+    };
+  }
+  $("quiz-close").onclick = closeQuiz;
+}
+
 // ---- boot -------------------------------------------------------------
 (async function boot() {
   initGraph();
@@ -710,5 +999,6 @@ function fmtDate(iso) {
   renderClustersPanel(r.graph.clusters);
   renderSuggestions(r.suggestions);
   renderTodos(r.todos || []);
+  renderReview(r.review || []);
   capture.focus();
 })();

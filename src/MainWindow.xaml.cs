@@ -18,6 +18,8 @@ public partial class MainWindow : Window
     private Librarian _librarian = null!;
     private Assistant _assistant = null!;
     private TodoService _todos = null!;
+    private QuizService _quiz = null!;
+    private ReviewService _review = null!;
     private IEmbedder _embedder = null!;
     private GlobalHotkey? _hotkey;
     private System.Windows.Forms.NotifyIcon? _tray;
@@ -70,6 +72,8 @@ public partial class MainWindow : Window
         _librarian = new Librarian(_db);
         _assistant = new Assistant(_notes);
         _todos = new TodoService(_db, _notes);
+        _quiz = new QuizService(_db);
+        _review = new ReviewService(_db);
 
         SetupTray();
         _hotkey = new GlobalHotkey(this,
@@ -132,6 +136,7 @@ public partial class MainWindow : Window
                     graph = _notes.GetGraph(),
                     suggestions = _db.GetPendingSuggestions(),
                     todos = _todos.GetTodos(),
+                    review = _review.GetDue(),
                 };
 
             case "graph":
@@ -189,6 +194,25 @@ public partial class MainWindow : Window
             {
                 var res = await _todos.ExtractAsync();
                 return new { result = res, todos = _todos.GetTodos() };
+            }
+
+            case "quiz":
+            {
+                var clusterId = payload.GetProperty("clusterId").GetInt64();
+                var regen = payload.TryGetProperty("regen", out var rg) && rg.GetBoolean();
+                var res = await _quiz.GetOrGenerateAsync(clusterId, regen);
+                return new { cards = res.cards, error = res.error };
+            }
+
+            case "review":
+                return _review.GetDue();
+
+            case "rateReview":
+            {
+                var id = payload.GetProperty("id").GetInt64();
+                var grade = payload.GetProperty("grade").GetString() ?? "good";
+                _review.Rate(id, grade);
+                return _review.GetDue();
             }
 
             case "librarian":

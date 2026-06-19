@@ -79,6 +79,20 @@ CREATE TABLE IF NOT EXISTS tasks(
     created_at  TEXT NOT NULL,
     UNIQUE(note_id, text)
 );
+CREATE TABLE IF NOT EXISTS flashcards(
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    cluster_id  INTEGER NOT NULL,
+    question    TEXT NOT NULL,
+    answer      TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS review(
+    note_id        INTEGER PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
+    due_at         TEXT NOT NULL,
+    interval_days  REAL NOT NULL,
+    ease           REAL NOT NULL,
+    last_reviewed  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS note_clusters(
     note_id     INTEGER PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
     cluster_id  INTEGER NOT NULL REFERENCES clusters(id) ON DELETE CASCADE
@@ -387,6 +401,116 @@ CREATE TABLE IF NOT EXISTS suggestions(
             cmd.Parameters.AddWithValue("$d", done ? 1 : 0);
             cmd.Parameters.AddWithValue("$id", id);
             cmd.ExecuteNonQuery();
+        }
+    }
+
+    // ---- flashcards --------------------------------------------------------
+
+    public void ReplaceFlashcards(long clusterId, IEnumerable<(string q, string a)> cards, string nowIso)
+    {
+        lock (_lock)
+        {
+            using var tx = _conn.BeginTransaction();
+            using (var del = _conn.CreateCommand())
+            {
+                del.CommandText = "DELETE FROM flashcards WHERE cluster_id=$c;";
+                del.Parameters.AddWithValue("$c", clusterId);
+                del.ExecuteNonQuery();
+            }
+            using (var ins = _conn.CreateCommand())
+            {
+                ins.CommandText = "INSERT INTO flashcards(cluster_id,question,answer,created_at) VALUES($c,$q,$a,$t);";
+                var pc = ins.Parameters.Add("$c", SqliteType.Integer);
+                var pq = ins.Parameters.Add("$q", SqliteType.Text);
+                var pa = ins.Parameters.Add("$a", SqliteType.Text);
+                var pt = ins.Parameters.Add("$t", SqliteType.Text);
+                foreach (var (q, a) in cards)
+                {
+                    pc.Value = clusterId; pq.Value = q; pa.Value = a; pt.Value = nowIso;
+                    ins.ExecuteNonQuery();
+                }
+            }
+            tx.Commit();
+        }
+    }
+
+    public List<(long id, string question, string answer)> GetFlashcards(long clusterId)
+    {
+        lock (_lock)
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = "SELECT id, question, answer FROM flashcards WHERE cluster_id=$c ORDER BY id;";
+            cmd.Parameters.AddWithValue("$c", clusterId);
+            using var r = cmd.ExecuteReader();
+            var list = new List<(long, string, string)>();
+            while (r.Read()) list.Add((r.GetInt64(0), r.GetString(1), r.GetString(2)));
+            return list;
+        }
+    }
+
+    // ---- spaced repetition -------------------------------------------------
+
+    /// <summary>Notes due for review: never-reviewed (no row) first by age, then
+    /// scheduled ones past due.</summary>
+    public List<(long id, string title, string body)> GetDueNotes(int limit, string nowIso)
+    {
+        lock (_lock)
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = @"SELECT n.id, n.title, n.body
+                                FROM notes n LEFT JOIN review r ON r.note_id = n.id
+                                WHERE r.due_at IS NULL OR r.due_at <= $now
+                                ORDER BY (CASE WHEN r.due_at IS NULL THEN 0 ELSE 1 END),
+                                         COALESCE(r.due_at, n.created_at) ASC
+                                LIMIT $lim;";
+            cmd.Parameters.AddWithValue("$now", nowIso);
+            cmd.Parameters.AddWithValue("$lim", limit);
+            using var r = cmd.ExecuteReader();
+            var list = new List<(long, string, string)>();
+            while (r.Read()) list.Add((r.GetInt64(0), r.GetString(1), r.GetString(2)));
+            return list;
+        }
+    }
+
+    public (double interval, double ease)? GetReview(long noteId)
+    {
+        lock (_lock)
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = "SELECT interval_days, ease FROM review WHERE note_id=$id;";
+            cmd.Parameters.AddWithValue("$id", noteId);
+            using var r = cmd.ExecuteReader();
+            return r.Read() ? (r.GetDouble(0), r.GetDouble(1)) : null;
+        }
+    }
+
+    public void SaveReview(long noteId, double interval, double ease, string dueAtIso, string nowIso)
+    {
+        lock (_lock)
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = @"INSERT INTO review(note_id,due_at,interval_days,ease,last_reviewed)
+                                VALUES($n,$d,$i,$e,$t)
+                                ON CONFLICT(note_id) DO UPDATE SET
+                                  due_at=$d, interval_days=$i, ease=$e, last_reviewed=$t;";
+            cmd.Parameters.AddWithValue("$n", noteId);
+            cmd.Parameters.AddWithValue("$d", dueAtIso);
+            cmd.Parameters.AddWithValue("$i", interval);
+            cmd.Parameters.AddWithValue("$e", ease);
+            cmd.Parameters.AddWithValue("$t", nowIso);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    public int CountDue(string nowIso)
+    {
+        lock (_lock)
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = @"SELECT COUNT(*) FROM notes n LEFT JOIN review r ON r.note_id=n.id
+                                WHERE r.due_at IS NULL OR r.due_at <= $now;";
+            cmd.Parameters.AddWithValue("$now", nowIso);
+            return Convert.ToInt32(cmd.ExecuteScalar());
         }
     }
 
