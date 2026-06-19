@@ -60,8 +60,27 @@ internal static class SelfTest
             foreach (var h in notes.Search("neural network token prediction", 3))
                 sb.AppendLine($"  {h.score:F3}  {h.title}");
 
+            // Import: a structured markdown file (heading split) + an
+            // unstructured text file (paragraph-merge chunking).
+            var importDir = Path.Combine(tempDir, "import");
+            Directory.CreateDirectory(importDir);
+            File.WriteAllText(Path.Combine(importDir, "structured.md"),
+                "# Budgets\nA budget forecasts income and expenditure.\n\n" +
+                "## Variance\nVariance is the gap between budgeted and actual figures.\n\n" +
+                "## Cash flow\nCash flow tracks money moving in and out over time.");
+            File.WriteAllText(Path.Combine(importDir, "loose.txt"),
+                "Random thought about gradient descent stepping down the loss surface.\n\n" +
+                "Unrelated note: remember to renew the parking permit next month.");
+
+            int before = notes.GetAllNotes().Count;
+            var imp = notes.ImportFiles(new[] { importDir });
+            int after = notes.GetAllNotes().Count;
             sb.AppendLine();
-            sb.AppendLine("RESULT: PASS");
+            sb.AppendLine($"import           : {imp.files} files → {imp.notes} notes (skipped {imp.skipped})");
+            sb.AppendLine($"notes total      : {before} → {after}");
+
+            sb.AppendLine();
+            sb.AppendLine(after > before && imp.notes >= 4 ? "RESULT: PASS" : "RESULT: FAIL (import produced too few notes)");
         }
         catch (Exception ex)
         {
@@ -75,5 +94,30 @@ internal static class SelfTest
 
         var outPath = Path.Combine(AppContext.BaseDirectory, "selftest.out");
         File.WriteAllText(outPath, sb.ToString());
+    }
+
+    /// <summary>Diagnostic for one file: report extracted length + chunk count.</summary>
+    public static void ExtractOne(string path)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"file: {path}");
+        var ex = FileImporter.Extract(path);
+        if (ex is null)
+        {
+            sb.AppendLine("RESULT: skipped (unsupported/binary/empty)");
+        }
+        else
+        {
+            var chunks = Chunker.Chunk(ex.Value.Text, ex.Value.Markdown);
+            sb.AppendLine($"extracted chars : {ex.Value.Text.Length}");
+            sb.AppendLine($"markdown        : {ex.Value.Markdown}");
+            sb.AppendLine($"chunks          : {chunks.Count}");
+            sb.AppendLine();
+            sb.AppendLine("--- first 400 chars ---");
+            sb.AppendLine(ex.Value.Text[..Math.Min(400, ex.Value.Text.Length)]);
+            sb.AppendLine();
+            sb.AppendLine(chunks.Count > 0 ? "RESULT: PASS" : "RESULT: FAIL (no chunks)");
+        }
+        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "extract.out"), sb.ToString());
     }
 }

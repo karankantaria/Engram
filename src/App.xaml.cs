@@ -21,6 +21,15 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        // Diagnostic: --extract <path> dumps extracted text + chunk count.
+        var ei = Array.IndexOf(e.Args, "--extract");
+        if (ei >= 0 && ei + 1 < e.Args.Length)
+        {
+            SelfTest.ExtractOne(e.Args[ei + 1]);
+            Shutdown();
+            return;
+        }
+
         _single = new Mutex(initiallyOwned: true, "Engram.SingleInstance.4f1a", out bool isNew);
         if (!isNew)
         {

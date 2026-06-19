@@ -3,8 +3,9 @@
 [Oo]bj/
 *.user
 
-# Self-test artifact
+# Diagnostic artifacts (--selftest / --extract)
 selftest.out
+extract.out
 
 # ML model + tokenizer are large binaries — fetched via scripts/fetch-model.ps1,
 # not committed. (model.onnx ~90MB.)

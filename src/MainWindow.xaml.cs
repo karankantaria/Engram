@@ -54,6 +54,8 @@ public partial class MainWindow : Window
             "engram.local", Paths.WebRootDir, CoreWebView2HostResourceAccessKind.Allow);
         Web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
         Web.CoreWebView2.Settings.IsStatusBarEnabled = false;
+        // Let the WPF host handle file drops (the web layer can't see file paths).
+        Web.AllowExternalDrop = false;
         Web.CoreWebView2.WebMessageReceived += OnWebMessage;
         Web.CoreWebView2.Navigate("https://engram.local/index.html");
     }
@@ -160,6 +162,9 @@ public partial class MainWindow : Window
             case "export":
                 return await ExportAsync();
 
+            case "import":
+                return await ImportDialogAsync();
+
             default:
                 throw new InvalidOperationException($"unknown action '{action}'");
         }
@@ -207,15 +212,61 @@ public partial class MainWindow : Window
         return new { path = (string?)null };
     }
 
+    private async Task<object?> ImportDialogAsync()
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Multiselect = true,
+            Title = "Import files into engram",
+            Filter = "Notes (*.md;*.txt;*.pdf)|*.md;*.markdown;*.txt;*.pdf|All files (*.*)|*.*",
+        };
+        if (dlg.ShowDialog(this) == true)
+        {
+            var res = await Task.Run(() => _notes.ImportFiles(dlg.FileNames));
+            return new { result = res, graph = _notes.GetGraph() };
+        }
+        return new { result = (object?)null, graph = _notes.GetGraph() };
+    }
+
+    // ---- drag & drop import (handled at the WPF layer) --------------------
+
+    private void WebHost_DragEnter(object sender, System.Windows.DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
+        {
+            e.Effects = System.Windows.DragDropEffects.Copy;
+            DropOverlay.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            e.Effects = System.Windows.DragDropEffects.None;
+        }
+        e.Handled = true;
+    }
+
+    private void WebHost_DragLeave(object sender, System.Windows.DragEventArgs e)
+        => DropOverlay.Visibility = Visibility.Collapsed;
+
+    private async void WebHost_Drop(object sender, System.Windows.DragEventArgs e)
+    {
+        DropOverlay.Visibility = Visibility.Collapsed;
+        if (!e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop)) return;
+        var paths = (string[])e.Data.GetData(System.Windows.DataFormats.FileDrop);
+
+        PostEvent("importing");
+        var res = await Task.Run(() => _notes.ImportFiles(paths));
+        PostEvent("imported", new { result = res, graph = _notes.GetGraph() });
+    }
+
     private void PostResponse(string id, bool ok, object? result, string? error)
     {
         var msg = JsonSerializer.Serialize(new { id, ok, result, error }, JsonOpts);
         Web.CoreWebView2?.PostWebMessageAsJson(msg);
     }
 
-    private void PostEvent(string evt)
+    private void PostEvent(string evt, object? payload = null)
     {
-        var msg = JsonSerializer.Serialize(new { @event = evt }, JsonOpts);
+        var msg = JsonSerializer.Serialize(new { @event = evt, payload }, JsonOpts);
         Web.CoreWebView2?.PostWebMessageAsJson(msg);
     }
 

@@ -35,6 +35,15 @@ internal sealed class NoteService
 
     public Note Capture(string text)
     {
+        var id = AddNoteCore(text);
+        Reindex();
+        return _db.GetNote(id)!;
+    }
+
+    /// <summary>Insert + persist + embed a single note without reindexing.
+    /// Bulk paths reindex once at the end.</summary>
+    private long AddNoteCore(string text)
+    {
         text = (text ?? string.Empty).Trim();
         var title = DeriveTitle(text);
         var now = DateTime.UtcNow.ToString("o");
@@ -45,8 +54,46 @@ internal sealed class NoteService
         _db.SetNotePath(id, path);
 
         _db.SaveEmbedding(id, _embedder.Embed(EmbedInput(title, text)));
-        Reindex();
-        return _db.GetNote(id)!;
+        return id;
+    }
+
+    public sealed record ImportResult(int files, int notes, int skipped);
+
+    /// <summary>Import files (dropped or picked): extract text, chunk into
+    /// note-sized pieces, add each, then reindex once.</summary>
+    public ImportResult ImportFiles(IEnumerable<string> paths)
+    {
+        int files = 0, notes = 0, skipped = 0;
+        foreach (var path in ExpandPaths(paths))
+        {
+            var extracted = FileImporter.Extract(path);
+            if (extracted is null) { skipped++; continue; }
+
+            var chunks = Chunker.Chunk(extracted.Value.Text, extracted.Value.Markdown);
+            if (chunks.Count == 0) { skipped++; continue; }
+
+            foreach (var c in chunks) { AddNoteCore(c); notes++; }
+            files++;
+        }
+        if (notes > 0) Reindex();
+        return new ImportResult(files, notes, skipped);
+    }
+
+    /// <summary>Flatten dropped paths: expand any directories to their files.</summary>
+    private static IEnumerable<string> ExpandPaths(IEnumerable<string> paths)
+    {
+        foreach (var p in paths)
+        {
+            if (Directory.Exists(p))
+            {
+                foreach (var f in Directory.EnumerateFiles(p, "*", SearchOption.AllDirectories))
+                    yield return f;
+            }
+            else if (File.Exists(p))
+            {
+                yield return p;
+            }
+        }
     }
 
     public Note? Update(long id, string text)

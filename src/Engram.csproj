@@ -22,12 +22,13 @@
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.27.0" />
     <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4022.49" />
+    <PackageReference Include="PdfPig" Version="0.1.14" />
   </ItemGroup>
 
   <!-- Web frontend assets: embedded so they survive single-file publish.
        Extracted to a temp folder at runtime and served via a virtual host. -->
   <ItemGroup>
-    <EmbeddedResource Include="web\**\*" >
+    <EmbeddedResource Include="web\**\*">
       <LogicalName>web/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>
   </ItemGroup>

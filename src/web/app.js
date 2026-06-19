@@ -14,7 +14,7 @@ function rpc(action, payload) {
 
 window.chrome.webview.addEventListener("message", (ev) => {
   const m = ev.data;
-  if (m.event) { onEvent(m.event); return; }
+  if (m.event) { onEvent(m.event, m.payload); return; }
   const p = pending[m.id];
   if (!p) return;
   delete pending[m.id];
@@ -22,12 +22,26 @@ window.chrome.webview.addEventListener("message", (ev) => {
   else p.reject(new Error(m.error || "error"));
 });
 
-function onEvent(name) {
+function onEvent(name, payload) {
   if (name === "focusCapture") {
     const c = document.getElementById("capture");
     c.focus();
     c.select();
+  } else if (name === "importing") {
+    toast("importing files…");
+  } else if (name === "imported") {
+    applyImport(payload);
   }
+}
+
+function applyImport(payload) {
+  if (!payload) return;
+  if (payload.graph) {
+    renderGraph(payload.graph);
+    renderClustersPanel(payload.graph.clusters);
+  }
+  const r = payload.result;
+  if (r) toast(`imported ${r.notes} notes from ${r.files} files` + (r.skipped ? ` · ${r.skipped} skipped` : ""));
 }
 
 // ---- elements ---------------------------------------------------------
@@ -267,6 +281,11 @@ $("btn-librarian").onclick = async () => {
   } catch (err) {
     toast("librarian error: " + err.message);
   }
+};
+
+$("btn-import").onclick = async () => {
+  const r = await rpc("import");
+  applyImport(r);
 };
 
 $("btn-export").onclick = async () => {
