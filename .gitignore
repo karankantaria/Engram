@@ -11,3 +11,6 @@ extract.out
 # not committed. (model.onnx ~90MB.)
 src/models/*.onnx
 src/models/vocab.txt
+
+# Packaged release artifacts (uploaded to GitHub Releases, not committed)
+dist/
