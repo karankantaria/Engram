@@ -39,6 +39,7 @@ function applyImport(payload) {
   if (payload.graph) {
     renderGraph(payload.graph);
     renderClustersPanel(payload.graph.clusters);
+    refreshTodos();
   }
   const r = payload.result;
   if (r) toast(`imported ${r.notes} notes from ${r.files} files` + (r.skipped ? ` · ${r.skipped} skipped` : ""));
@@ -130,7 +131,7 @@ function renderLegend(clusters) {
         `<span class="swatch" style="background:${c.color}"></span>` +
         `<span class="cluster-name">${esc(c.name)}</span>` +
         `<span class="cluster-count">${c.count}</span>`;
-      row.onclick = () => renameCluster(c);
+      row.onclick = () => openClusterDetail(c);
       el.appendChild(row);
     });
 }
@@ -140,7 +141,38 @@ async function renameCluster(c) {
   if (name && name.trim() && name !== c.name) {
     const r = await rpc("renameCluster", { id: c.id, name: name.trim() });
     renderGraph(r.graph);
+    renderClustersPanel(r.graph.clusters);
+    const updated = r.graph.clusters.find((x) => x.id === c.id);
+    if (updated) openClusterDetail(updated);
   }
+}
+
+function openClusterDetail(c) {
+  const el = $("clusterview");
+  el.classList.remove("hidden");
+  const members = lastGraph.nodes.filter((n) => n.cluster === c.id);
+  let html =
+    `<div class="panel-title">cluster <span class="mini-link" id="cv-close">close ✕</span></div>` +
+    `<div class="cv-head"><span class="swatch" style="background:${c.color}"></span>` +
+    `<span class="cv-name">${esc(c.name)}</span>` +
+    `<span class="mini-link" id="cv-rename">rename</span></div>` +
+    (c.summary
+      ? `<div class="cv-summary">${esc(c.summary)}</div>`
+      : `<div class="empty">no summary yet — run ⟳ librarian to generate one</div>`) +
+    `<div class="cv-notes-title">${members.length} notes</div>`;
+  members.forEach((m) => {
+    html += `<div class="row cv-note" data-id="${m.id}"><div class="row-title" style="color:${m.color}">${esc(m.title)}</div></div>`;
+  });
+  el.innerHTML = html;
+  $("cv-close").onclick = () => el.classList.add("hidden");
+  $("cv-rename").onclick = () => renameCluster(c);
+  el.querySelectorAll(".cv-note").forEach((node) => {
+    node.onclick = () => {
+      const id = Number(node.getAttribute("data-id"));
+      openNote(id);
+      focusNode(id);
+    };
+  });
 }
 
 // ---- clusters panel (mirror of legend, in sidebar) --------------------
@@ -159,7 +191,7 @@ function renderClustersPanel(clusters) {
       `<span class="swatch" style="background:${c.color}"></span>` +
       `<span class="cluster-name">${esc(c.name)}</span>` +
       `<span class="cluster-count">${c.count}</span>`;
-    row.onclick = () => renameCluster(c);
+    row.onclick = () => openClusterDetail(c);
     el.appendChild(row);
   });
 }
@@ -181,6 +213,7 @@ capture.addEventListener("keydown", async (e) => {
       const r = await rpc("capture", { text });
       renderGraph(r.graph);
       renderClustersPanel(r.graph.clusters);
+      refreshTodos();
       toast("captured · " + (r.note ? r.note.title : ""));
     } catch (err) {
       toast("error: " + err.message);
@@ -189,6 +222,17 @@ capture.addEventListener("keydown", async (e) => {
 });
 
 // ---- reader -----------------------------------------------------------
+function renderMarkdown(text) {
+  try { return marked.parse(text || ""); }
+  catch { return esc(text || ""); }
+}
+
+function setReaderMode(editing) {
+  $("reader-body").classList.toggle("hidden", !editing);
+  $("reader-rendered").classList.toggle("hidden", editing);
+  $("btn-edit").textContent = editing ? "preview" : "edit";
+}
+
 async function openNote(id) {
   const note = await rpc("note", { id });
   if (!note) return;
@@ -198,8 +242,16 @@ async function openNote(id) {
   $("reader-meta").textContent = "created " + fmtDate(note.createdAt) +
     (note.updatedAt !== note.createdAt ? " · edited " + fmtDate(note.updatedAt) : "");
   $("reader-body").value = note.body;
+  $("reader-rendered").innerHTML = renderMarkdown(note.body);
+  setReaderMode(false); // default to rendered view
   if (Graph) Graph.nodeColor((n) => n.color); // trigger redraw of highlight
 }
+
+$("btn-edit").onclick = () => {
+  const editing = $("reader-body").classList.contains("hidden"); // currently rendered → go edit
+  setReaderMode(editing);
+  if (editing) $("reader-body").focus();
+};
 
 $("btn-save").onclick = async () => {
   if (currentNoteId === null) return;
@@ -208,6 +260,9 @@ $("btn-save").onclick = async () => {
   renderGraph(r.graph);
   renderClustersPanel(r.graph.clusters);
   if (r.note) { $("reader-title").textContent = r.note.title; }
+  $("reader-rendered").innerHTML = renderMarkdown(text);
+  setReaderMode(false);
+  refreshTodos();
   toast("saved");
 };
 
@@ -219,6 +274,7 @@ $("btn-delete").onclick = async () => {
   $("reader").classList.add("hidden");
   renderGraph(r.graph);
   renderClustersPanel(r.graph.clusters);
+  refreshTodos();
   toast("deleted");
 };
 
@@ -238,6 +294,64 @@ searchInput.addEventListener("input", () => {
     renderSearch(hits);
   }, 220);
 });
+
+// Enter in the search box → ask Claude a question grounded in the notes.
+searchInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const q = searchInput.value.trim();
+    if (q) ask(q);
+  }
+});
+
+let asking = false;
+async function ask(question) {
+  if (asking) return;
+  asking = true;
+  const el = $("answer");
+  el.classList.remove("hidden");
+  el.innerHTML = `<div class="panel-title">ask</div><div class="thinking">thinking… (asking claude)</div>`;
+  try {
+    const a = await rpc("ask", { question });
+    renderAnswer(question, a);
+  } catch (err) {
+    el.innerHTML = `<div class="panel-title">ask</div><div class="empty">error: ${esc(err.message)}</div>`;
+  } finally {
+    asking = false;
+  }
+}
+
+function renderAnswer(question, a) {
+  const el = $("answer");
+  if (a.error) {
+    el.innerHTML = `<div class="panel-title">ask</div><div class="empty">${esc(a.error)}</div>`;
+    return;
+  }
+  // Linkify [id] citations into clickable references.
+  const text = esc(a.text).replace(/\[(\d+)\]/g, '<a class="cite" data-id="$1">[$1]</a>');
+  let html =
+    `<div class="panel-title">ask</div>` +
+    `<div class="ask-q">${esc(question)}</div>` +
+    `<div class="ask-a">${text}</div>`;
+  if (a.sources && a.sources.length) {
+    html += `<div class="ask-src-title">sources</div>`;
+    a.sources.forEach((s) => {
+      html +=
+        `<div class="ask-src" data-id="${s.id}">` +
+        `<span class="swatch" style="background:${s.color}"></span>` +
+        `<span class="ask-src-name">${esc(s.title)}</span>` +
+        `<span class="score">${(s.score * 100).toFixed(0)}%</span></div>`;
+    });
+  }
+  el.innerHTML = html;
+  el.querySelectorAll(".cite, .ask-src").forEach((node) => {
+    node.onclick = () => {
+      const id = Number(node.getAttribute("data-id"));
+      openNote(id);
+      focusNode(id);
+    };
+  });
+}
 
 function renderSearch(hits) {
   const el = $("searchresults");
@@ -268,6 +382,12 @@ function focusNode(id) {
 }
 
 // ---- librarian + export ----------------------------------------------
+$("btn-ask").onclick = () => {
+  const q = searchInput.value.trim();
+  if (q) ask(q);
+  else { searchInput.focus(); toast("type a question first"); }
+};
+
 $("btn-librarian").onclick = async () => {
   toast("librarian thinking… (calling claude)");
   try {
@@ -292,6 +412,72 @@ $("btn-export").onclick = async () => {
   const r = await rpc("export");
   if (r && r.path) toast("exported → " + r.path);
 };
+
+// ---- todos ------------------------------------------------------------
+function renderTodos(todos) {
+  const el = $("todos");
+  const open = todos.filter((t) => !t.done).length;
+  let html = `<div class="panel-title">tasks ${open ? `· ${open} open ` : ""}<span class="mini-link" id="todo-scan">scan with claude</span></div>`;
+
+  if (todos.length === 0) {
+    el.innerHTML = html + `<div class="empty">no tasks — add "- [ ] something" to a note, or scan</div>`;
+    $("todo-scan").onclick = scanTodos;
+    return;
+  }
+
+  // group by cluster; 'unsorted' (id 0) sinks to the bottom
+  const groups = {};
+  todos.forEach((t) => {
+    (groups[t.cluster] ||= { name: t.clusterName, color: t.color, items: [] }).items.push(t);
+  });
+  Object.keys(groups)
+    .sort((a, b) => (a === "0") - (b === "0") || groups[a].name.localeCompare(groups[b].name))
+    .forEach((cid) => {
+      const g = groups[cid];
+      html += `<div class="todo-group"><span class="swatch" style="background:${g.color}"></span>${esc(g.name)}</div>`;
+      g.items.sort((a, b) => (a.done - b.done)).forEach((t) => {
+        html +=
+          `<label class="todo ${t.done ? "done" : ""}">` +
+          `<input type="checkbox" data-id="${t.id}" ${t.done ? "checked" : ""}>` +
+          `<span class="todo-text">${esc(t.text)}</span>` +
+          `<span class="todo-src" data-note="${t.noteId}" title="${esc(t.noteTitle)}">⤴</span>` +
+          `</label>`;
+      });
+    });
+  el.innerHTML = html;
+
+  $("todo-scan").onclick = scanTodos;
+  el.querySelectorAll(".todo input[type=checkbox]").forEach((box) => {
+    box.onchange = async () => {
+      const r = await rpc("toggleTodo", { id: box.getAttribute("data-id"), done: box.checked });
+      renderTodos(r);
+    };
+  });
+  el.querySelectorAll(".todo-src").forEach((s) => {
+    s.onclick = (e) => {
+      e.preventDefault();
+      const id = Number(s.getAttribute("data-note"));
+      openNote(id);
+      focusNode(id);
+    };
+  });
+}
+
+async function scanTodos() {
+  toast("scanning notes for tasks… (claude)");
+  try {
+    const r = await rpc("extractTodos");
+    renderTodos(r.todos);
+    if (r.result && r.result.error) toast("scan: " + r.result.error);
+    else toast(`found ${r.result ? r.result.added : 0} new tasks`);
+  } catch (err) {
+    toast("scan error: " + err.message);
+  }
+}
+
+async function refreshTodos() {
+  try { renderTodos(await rpc("todos")); } catch {}
+}
 
 // ---- suggestions ------------------------------------------------------
 function renderSuggestions(suggestions) {
@@ -354,5 +540,6 @@ function fmtDate(iso) {
   renderGraph(r.graph);
   renderClustersPanel(r.graph.clusters);
   renderSuggestions(r.suggestions);
+  renderTodos(r.todos || []);
   capture.focus();
 })();

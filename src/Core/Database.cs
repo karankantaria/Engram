@@ -22,6 +22,25 @@ internal sealed class Database : IDisposable
         _conn.Open();
         Exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
         CreateSchema();
+        Migrate();
+    }
+
+    /// <summary>Additive migrations for DBs created by an earlier version.</summary>
+    private void Migrate()
+    {
+        if (!ColumnExists("clusters", "summary"))
+            Exec("ALTER TABLE clusters ADD COLUMN summary TEXT NOT NULL DEFAULT '';");
+    }
+
+    private bool ColumnExists(string table, string column)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = $"PRAGMA table_info({table});";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            if (string.Equals(r.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
     }
 
     private void CreateSchema()
@@ -49,7 +68,16 @@ CREATE TABLE IF NOT EXISTS edges(
 CREATE TABLE IF NOT EXISTS clusters(
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT NOT NULL,
-    color       TEXT NOT NULL
+    color       TEXT NOT NULL,
+    summary     TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS tasks(
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id     INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    text        TEXT NOT NULL,
+    done        INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    UNIQUE(note_id, text)
 );
 CREATE TABLE IF NOT EXISTS note_clusters(
     note_id     INTEGER PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
@@ -246,7 +274,7 @@ CREATE TABLE IF NOT EXISTS suggestions(
             Run("DELETE FROM clusters;");
             using (var ins = _conn.CreateCommand())
             {
-                ins.CommandText = "INSERT INTO clusters(id,name,color) VALUES($id,$n,$c);";
+                ins.CommandText = "INSERT INTO clusters(id,name,color,summary) VALUES($id,$n,$c,'');";
                 var pid = ins.Parameters.Add("$id", SqliteType.Integer);
                 var pn = ins.Parameters.Add("$n", SqliteType.Text);
                 var pc = ins.Parameters.Add("$c", SqliteType.Text);
@@ -283,12 +311,13 @@ CREATE TABLE IF NOT EXISTS suggestions(
         lock (_lock)
         {
             using var cmd = _conn.CreateCommand();
-            cmd.CommandText = @"SELECT c.id, c.name, c.color, COUNT(nc.note_id)
+            cmd.CommandText = @"SELECT c.id, c.name, c.color, COUNT(nc.note_id), c.summary
                                 FROM clusters c LEFT JOIN note_clusters nc ON nc.cluster_id=c.id
                                 GROUP BY c.id ORDER BY c.id;";
             using var r = cmd.ExecuteReader();
             var list = new List<ClusterInfo>();
-            while (r.Read()) list.Add(new ClusterInfo(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetInt32(3)));
+            while (r.Read())
+                list.Add(new ClusterInfo(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetInt32(3), r.GetString(4)));
             return list;
         }
     }
@@ -301,6 +330,62 @@ CREATE TABLE IF NOT EXISTS suggestions(
             cmd.CommandText = "UPDATE clusters SET name=$n WHERE id=$id;";
             cmd.Parameters.AddWithValue("$n", name);
             cmd.Parameters.AddWithValue("$id", clusterId);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Apply librarian-generated metadata (name + summary) to a cluster.</summary>
+    public void SetClusterMeta(long clusterId, string name, string summary)
+    {
+        lock (_lock)
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = "UPDATE clusters SET name=$n, summary=$s WHERE id=$id;";
+            cmd.Parameters.AddWithValue("$n", name);
+            cmd.Parameters.AddWithValue("$s", summary);
+            cmd.Parameters.AddWithValue("$id", clusterId);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    // ---- tasks (claude-extracted TODOs) -----------------------------------
+
+    /// <summary>Insert an extracted task; ignores exact duplicates per note.</summary>
+    public bool AddTask(long noteId, string text, string nowIso)
+    {
+        lock (_lock)
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = @"INSERT OR IGNORE INTO tasks(note_id,text,done,created_at)
+                                VALUES($n,$t,0,$c);";
+            cmd.Parameters.AddWithValue("$n", noteId);
+            cmd.Parameters.AddWithValue("$t", text);
+            cmd.Parameters.AddWithValue("$c", nowIso);
+            return cmd.ExecuteNonQuery() > 0;
+        }
+    }
+
+    public List<(long id, long noteId, string text, bool done)> GetTasks()
+    {
+        lock (_lock)
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = "SELECT id, note_id, text, done FROM tasks ORDER BY id;";
+            using var r = cmd.ExecuteReader();
+            var list = new List<(long, long, string, bool)>();
+            while (r.Read()) list.Add((r.GetInt64(0), r.GetInt64(1), r.GetString(2), r.GetInt32(3) != 0));
+            return list;
+        }
+    }
+
+    public void SetTaskDone(long id, bool done)
+    {
+        lock (_lock)
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = "UPDATE tasks SET done=$d WHERE id=$id;";
+            cmd.Parameters.AddWithValue("$d", done ? 1 : 0);
+            cmd.Parameters.AddWithValue("$id", id);
             cmd.ExecuteNonQuery();
         }
     }

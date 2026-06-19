@@ -26,27 +26,33 @@
     <!-- Sidebar -->
     <div id="sidebar">
       <div id="toolbar">
-        <input id="search" type="text" placeholder="/ semantic search" autocomplete="off" spellcheck="false" />
+        <input id="search" type="text" placeholder="/ search · Enter to ask Claude" autocomplete="off" spellcheck="false" />
+        <button id="btn-ask" title="Ask Claude a question answered from your notes">⏎ ask</button>
         <button id="btn-librarian" title="Ask Claude to name clusters & suggest links">⟳ librarian</button>
         <button id="btn-import" title="Import files (md/txt/pdf) — auto-split into notes">⇪ import</button>
         <button id="btn-export" title="Export all notes to a zip">⤓ export</button>
       </div>
 
+      <div id="answer" class="panel hidden"></div>
+      <div id="clusterview" class="panel hidden"></div>
       <div id="searchresults" class="panel hidden"></div>
 
       <div id="reader" class="panel hidden">
         <div class="reader-head">
           <span id="reader-title"></span>
           <span class="reader-actions">
+            <button id="btn-edit" title="Edit raw markdown">edit</button>
             <button id="btn-save" title="Save edits">save</button>
             <button id="btn-delete" title="Delete note">del</button>
             <button id="btn-close" title="Close">✕</button>
           </span>
         </div>
         <div id="reader-meta"></div>
-        <textarea id="reader-body" spellcheck="false"></textarea>
+        <div id="reader-rendered" class="md"></div>
+        <textarea id="reader-body" class="hidden" spellcheck="false"></textarea>
       </div>
 
+      <div id="todos" class="panel"></div>
       <div id="suggestions" class="panel"></div>
       <div id="clusters" class="panel"></div>
     </div>
@@ -55,6 +61,7 @@
   <div id="toast"></div>
 
   <script src="vendor/force-graph.min.js"></script>
+  <script src="vendor/marked.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

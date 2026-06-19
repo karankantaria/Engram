@@ -57,6 +57,22 @@ internal sealed class NoteService
         return id;
     }
 
+    /// <summary>Toggle a markdown checkbox in a note and write it back to disk.
+    /// Deliberately skips re-embedding/reindexing — a checkbox flip doesn't
+    /// change the note's meaning, and re-embedding on every tick would be wasteful.</summary>
+    public void SetChecklistItem(long noteId, int lineIndex, bool done)
+    {
+        var note = _db.GetNote(noteId);
+        if (note is null) return;
+        var lines = note.Body.Replace("\r\n", "\n").Split('\n');
+        if (lineIndex < 0 || lineIndex >= lines.Length) return;
+
+        lines[lineIndex] = TaskScanner.SetLine(lines[lineIndex], done);
+        var body = string.Join("\n", lines);
+        _db.UpdateNote(noteId, note.Title, body, DateTime.UtcNow.ToString("o"));
+        try { File.WriteAllText(note.Path, body); } catch { /* best effort */ }
+    }
+
     public sealed record ImportResult(int files, int notes, int skipped);
 
     /// <summary>Import files (dropped or picked): extract text, chunk into
@@ -246,6 +262,31 @@ internal sealed class NoteService
                 long cl = n.ClusterId ?? 0;
                 var color = cl != 0 && clusters.TryGetValue(cl, out var c) ? c.color : "#5C6370";
                 return new SearchHit(n.Id, n.Title, Snippet(n.Body), Math.Round(x.score, 4), cl, color);
+            })
+            .ToList();
+    }
+
+    /// <summary>Top-k most relevant notes (full bodies) for grounding a RAG
+    /// answer, with each note's cluster color for citation display.</summary>
+    public List<(Note note, double score, string color)> RetrieveRelevant(string query, int k)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return new();
+        var q = _embedder.Embed(query);
+        var emb = _db.GetAllEmbeddings();
+        var notes = _db.GetAllNotes().ToDictionary(n => n.Id);
+        var clusters = _db.GetClusters().ToDictionary(c => c.id);
+
+        return emb
+            .Select(kv => (id: kv.Key, score: Cosine(q, kv.Value)))
+            .Where(x => notes.ContainsKey(x.id))
+            .OrderByDescending(x => x.score)
+            .Take(k)
+            .Select(x =>
+            {
+                var n = notes[x.id];
+                long cl = n.ClusterId ?? 0;
+                var color = cl != 0 && clusters.TryGetValue(cl, out var c) ? c.color : "#5C6370";
+                return (n, x.score, color);
             })
             .ToList();
     }

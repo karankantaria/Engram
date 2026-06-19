@@ -18,7 +18,15 @@ public sealed record GraphNode(long id, string title, long cluster, string color
 public sealed record GraphLink(long source, long target, double weight);
 
 /// <summary>An emergent cluster (community) of related notes.</summary>
-public sealed record ClusterInfo(long id, string name, string color, int count);
+public sealed record ClusterInfo(long id, string name, string color, int count, string summary);
+
+/// <summary>A TODO item surfaced from the notes. Local items come from markdown
+/// checkboxes (round-tripped to the source file); claude items are implicit
+/// tasks extracted on demand and tracked in the DB. The composite <c>id</c>
+/// encodes which: "L:{noteId}:{line}" or "C:{taskId}".</summary>
+public sealed record TodoItem(
+    string id, string text, bool done, string source,
+    long noteId, string noteTitle, long cluster, string clusterName, string color);
 
 /// <summary>Full payload handed to force-graph on the frontend.</summary>
 public sealed record GraphData(

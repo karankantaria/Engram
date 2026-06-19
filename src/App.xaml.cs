@@ -30,6 +30,15 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        // Diagnostic: --ask "question" runs one real RAG query against seeded notes.
+        var ai = Array.IndexOf(e.Args, "--ask");
+        if (ai >= 0 && ai + 1 < e.Args.Length)
+        {
+            SelfTest.AskOne(e.Args[ai + 1]);
+            Shutdown();
+            return;
+        }
+
         _single = new Mutex(initiallyOwned: true, "Engram.SingleInstance.4f1a", out bool isNew);
         if (!isNew)
         {

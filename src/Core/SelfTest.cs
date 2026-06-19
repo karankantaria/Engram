@@ -79,8 +79,20 @@ internal static class SelfTest
             sb.AppendLine($"import           : {imp.files} files → {imp.notes} notes (skipped {imp.skipped})");
             sb.AppendLine($"notes total      : {before} → {after}");
 
+            // TODO: local checkbox scan + write-back round-trip.
+            var todoSvc = new TodoService(db, notes);
+            notes.Capture("Shopping list\n- [ ] buy milk\n- [x] call the bank\n- [ ] email the tutor");
+            var todos = todoSvc.GetTodos();
+            int localCount = todos.Count(t => t.source == "local");
+            var milk = todos.First(t => t.text.Contains("buy milk"));
+            todoSvc.Toggle(milk.id, true); // complete it → should write [x] back to the note
+            bool milkDone = todoSvc.GetTodos().First(t => t.text.Contains("buy milk")).done;
             sb.AppendLine();
-            sb.AppendLine(after > before && imp.notes >= 4 ? "RESULT: PASS" : "RESULT: FAIL (import produced too few notes)");
+            sb.AppendLine($"todos (local)    : {localCount} found; 'buy milk' done after toggle = {milkDone}");
+
+            bool ok = after > before && imp.notes >= 4 && localCount == 3 && milkDone;
+            sb.AppendLine();
+            sb.AppendLine(ok ? "RESULT: PASS" : "RESULT: FAIL");
         }
         catch (Exception ex)
         {
@@ -119,5 +131,49 @@ internal static class SelfTest
             sb.AppendLine(chunks.Count > 0 ? "RESULT: PASS" : "RESULT: FAIL (no chunks)");
         }
         File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "extract.out"), sb.ToString());
+    }
+
+    /// <summary>End-to-end RAG check: seeds notes, asks Claude a real question,
+    /// writes the grounded answer + cited sources to ask.out. Makes ONE real
+    /// `claude` CLI call. Invoke: engram.exe --ask "your question"</summary>
+    public static void AskOne(string question)
+    {
+        var sb = new StringBuilder();
+        var tempDir = Path.Combine(Path.GetTempPath(), "engram-ask-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            using var db = new Database(Path.Combine(tempDir, "ask.db"));
+            var embedder = EmbedderFactory.Create();
+            var notes = new NoteService(db, embedder, Path.Combine(tempDir, "notes"));
+            foreach (var s in new[]
+            {
+                "Depreciation reduces the book value of a fixed asset over its useful life",
+                "Straight-line depreciation spreads an asset's cost evenly across accounting periods",
+                "Accruals match revenue to the period in which it was earned, not when cash moves",
+                "Transformer attention lets a model weigh tokens by relevance to each other",
+                "Fine-tuning adapts a pretrained model to a specific downstream task",
+            }) notes.Capture(s);
+
+            var assistant = new Assistant(notes);
+            var ans = assistant.AskAsync(question).GetAwaiter().GetResult();
+
+            sb.AppendLine($"Q: {question}");
+            sb.AppendLine();
+            if (ans.error != null) { sb.AppendLine("ERROR: " + ans.error); sb.AppendLine("RESULT: FAIL"); }
+            else
+            {
+                sb.AppendLine("A: " + ans.text);
+                sb.AppendLine();
+                sb.AppendLine("sources:");
+                foreach (var s in ans.sources) sb.AppendLine($"  [{s.id}] {s.score:F3}  {s.title}");
+                sb.AppendLine();
+                sb.AppendLine(string.IsNullOrWhiteSpace(ans.text) ? "RESULT: FAIL (empty answer)" : "RESULT: PASS");
+            }
+        }
+        catch (Exception ex) { sb.AppendLine("RESULT: FAIL"); sb.AppendLine(ex.ToString()); }
+        finally { try { Directory.Delete(tempDir, true); } catch { } }
+
+        File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "ask.out"), sb.ToString());
     }
 }

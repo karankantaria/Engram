@@ -16,6 +16,8 @@ public partial class MainWindow : Window
     private Database _db = null!;
     private NoteService _notes = null!;
     private Librarian _librarian = null!;
+    private Assistant _assistant = null!;
+    private TodoService _todos = null!;
     private IEmbedder _embedder = null!;
     private GlobalHotkey? _hotkey;
     private System.Windows.Forms.NotifyIcon? _tray;
@@ -66,6 +68,8 @@ public partial class MainWindow : Window
         _embedder = EmbedderFactory.Create();
         _notes = new NoteService(_db, _embedder);
         _librarian = new Librarian(_db);
+        _assistant = new Assistant(_notes);
+        _todos = new TodoService(_db, _notes);
 
         SetupTray();
         _hotkey = new GlobalHotkey(this,
@@ -127,6 +131,7 @@ public partial class MainWindow : Window
                     backend = _notes.EmbedderBackend,
                     graph = _notes.GetGraph(),
                     suggestions = _db.GetPendingSuggestions(),
+                    todos = _todos.GetTodos(),
                 };
 
             case "graph":
@@ -161,6 +166,29 @@ public partial class MainWindow : Window
             {
                 var query = payload.GetProperty("query").GetString() ?? "";
                 return await Task.Run(() => _notes.Search(query));
+            }
+
+            case "ask":
+            {
+                var question = payload.GetProperty("question").GetString() ?? "";
+                return await _assistant.AskAsync(question);
+            }
+
+            case "todos":
+                return _todos.GetTodos();
+
+            case "toggleTodo":
+            {
+                var tid = payload.GetProperty("id").GetString() ?? "";
+                var done = payload.TryGetProperty("done", out var d) && d.GetBoolean();
+                await Task.Run(() => _todos.Toggle(tid, done));
+                return _todos.GetTodos();
+            }
+
+            case "extractTodos":
+            {
+                var res = await _todos.ExtractAsync();
+                return new { result = res, todos = _todos.GetTodos() };
             }
 
             case "librarian":

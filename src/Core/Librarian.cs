@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.IO;
 using System.Text;
 using System.Text.Json;
 
@@ -27,7 +25,7 @@ internal sealed class Librarian
 
         var prompt = BuildPrompt(clusters, notes);
         string raw;
-        try { raw = await InvokeClaudeAsync(prompt, ct); }
+        try { raw = await ClaudeCli.RunAsync(prompt, ct); }
         catch (Exception ex) { return new Result(0, 0, 0, ex.Message); }
 
         var json = ExtractJson(raw);
@@ -49,7 +47,8 @@ internal sealed class Librarian
                         var name = nameEl.GetString();
                         if (!string.IsNullOrWhiteSpace(name))
                         {
-                            _db.RenameCluster(idEl.GetInt64(), name!.Trim());
+                            var summary = c.TryGetProperty("summary", out var sEl) ? (sEl.GetString() ?? "") : "";
+                            _db.SetClusterMeta(idEl.GetInt64(), name!.Trim(), summary.Trim());
                             named++;
                         }
                     }
@@ -100,59 +99,20 @@ internal sealed class Librarian
             sb.AppendLine();
         }
         sb.AppendLine("Tasks:");
-        sb.AppendLine("1. Give each cluster a short, human, descriptive name (2-4 words).");
+        sb.AppendLine("1. Give each cluster a short, human, descriptive name (2-4 words) AND a 1-2 sentence");
+        sb.AppendLine("   summary of what the notes in it are about ('what I know about X').");
         sb.AppendLine("2. Suggest up to 8 links between specific notes that are related but may be in different clusters.");
         sb.AppendLine("3. Suggest up to 5 merges of near-duplicate notes.");
         sb.AppendLine();
         sb.AppendLine("Respond with ONLY a JSON object, no prose, in exactly this shape:");
         sb.AppendLine("""
         {
-          "clusters": [ { "id": 1, "name": "..." } ],
+          "clusters": [ { "id": 1, "name": "...", "summary": "..." } ],
           "links":    [ { "a": 12, "b": 34, "reason": "..." } ],
           "merges":   [ { "from": 12, "to": 34, "reason": "..." } ]
         }
         """);
         return sb.ToString();
-    }
-
-    private static async Task<string> InvokeClaudeAsync(string prompt, CancellationToken ct)
-    {
-        var exe = ResolveClaudeExe();
-        var psi = new ProcessStartInfo
-        {
-            FileName = exe,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = Paths.DataDir,
-        };
-        psi.ArgumentList.Add("-p");                       // print mode (non-interactive)
-        psi.ArgumentList.Add("--output-format");
-        psi.ArgumentList.Add("text");
-
-        using var proc = new Process { StartInfo = psi };
-        proc.Start();
-        await proc.StandardInput.WriteAsync(prompt);
-        proc.StandardInput.Close();
-
-        var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = proc.StandardError.ReadToEndAsync(ct);
-        await proc.WaitForExitAsync(ct);
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-
-        if (proc.ExitCode != 0 && string.IsNullOrWhiteSpace(stdout))
-            throw new InvalidOperationException($"claude exited {proc.ExitCode}: {stderr}");
-        return stdout;
-    }
-
-    private static string ResolveClaudeExe()
-    {
-        var local = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "bin", "claude.exe");
-        return File.Exists(local) ? local : "claude";
     }
 
     private static string? ExtractJson(string text)
