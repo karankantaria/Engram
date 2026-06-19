@@ -7,6 +7,9 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <!-- Animated brand splash; loads over the app and lifts when ready -->
+  <iframe id="splash-frame" src="splash.html" title="loading engram"></iframe>
+
   <!-- Capture bar: terminal prompt -->
   <div id="capturebar">
     <span class="prompt">engram&gt;</span>
@@ -21,6 +24,7 @@
       <div id="graph"></div>
       <div id="legend"></div>
       <div id="filterbar" class="hidden"></div>
+      <button id="btn-reset-view" title="Reset / fit the graph in view (or press F)">⊹ fit view</button>
       <div id="statusline"></div>
     </div>
 

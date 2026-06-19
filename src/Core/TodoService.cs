@@ -105,7 +105,7 @@ internal sealed class TodoService
     {
         long cl = n.ClusterId ?? 0;
         if (cl != 0 && clusters.TryGetValue(cl, out var c)) return (cl, c.name, c.color);
-        return (0, "unsorted", "#5C6370");
+        return (0, "unsorted", "#5C6675");
     }
 
     private static string BuildPrompt(List<Note> notes)

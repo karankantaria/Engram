@@ -34,6 +34,29 @@ function onEvent(name, payload) {
   }
 }
 
+// ---- brand splash overlay ---------------------------------------------
+// The splash (an iframe, same-origin) calls onEngramSplashDone / dispatches
+// "engram:splash-done" when its intro finishes. We fade it out then; the app
+// has been loading behind it the whole time.
+(function wireSplash() {
+  const f = document.getElementById("splash-frame");
+  if (!f) return;
+  let removed = false;
+  const remove = () => {
+    if (removed) return;
+    removed = true;
+    f.classList.add("gone");
+    setTimeout(() => f.remove(), 600);
+  };
+  f.addEventListener("load", () => {
+    try {
+      f.contentWindow.onEngramSplashDone = remove;
+      f.contentWindow.addEventListener("engram:splash-done", remove);
+    } catch { /* cross-origin shouldn't happen (same virtual host) */ }
+  });
+  setTimeout(remove, 6500); // safety net if the splash never signals
+})();
+
 function applyImport(payload) {
   if (!payload) return;
   if (payload.graph) {
@@ -89,7 +112,7 @@ function particleAccessor(l) {
 }
 
 function hexA(hex, a) {
-  const h = (hex || "#5C6370").replace("#", "");
+  const h = (hex || "#5C6675").replace("#", "");
   const r = parseInt(h.substring(0, 2), 16);
   const g = parseInt(h.substring(2, 4), 16);
   const b = parseInt(h.substring(4, 6), 16);
@@ -184,21 +207,21 @@ function toast(msg) {
 function initGraph() {
   const el = document.getElementById("graph");
   Graph = ForceGraph()(el)
-    .backgroundColor("#0B0E14")
+    .backgroundColor("#0B0F15")
     .nodeId("id")
     .nodeRelSize(5)
     .nodeColor((n) => n.color)
     .cooldownTime(4000)
     .linkColor((l) => {
       if (mode === "browse" && highlightLinks.size)
-        return highlightLinks.has(l) ? "rgba(92,207,230,0.55)" : "rgba(92,103,112,0.07)";
-      return "rgba(92,103,112,0.28)";
+        return highlightLinks.has(l) ? "rgba(67,224,139,0.55)" : "rgba(92,102,117,0.07)";
+      return "rgba(92,102,117,0.26)";
     })
     .linkWidth((l) => (highlightLinks.has(l) ? 2.2 : 0.5 + (l.weight || 0) * 1.5))
     .linkDirectionalParticles(particleAccessor)
     .linkDirectionalParticleSpeed((l) => 0.003 + (l.weight || 0) * 0.006)
     .linkDirectionalParticleWidth(2)
-    .linkDirectionalParticleColor(() => "rgba(92,207,230,0.9)")
+    .linkDirectionalParticleColor(() => "rgba(67,224,139,0.9)")
     .nodeCanvasObjectMode(() => "replace")
     .nodeCanvasObject((node, ctx, scale) => {
       const now = performance.now();
@@ -238,7 +261,7 @@ function initGraph() {
       if (!dim && (scale > 1.3 || (mode === "browse" && hl))) {
         const label = node.title || "";
         ctx.font = `${10 / scale}px Consolas, monospace`;
-        ctx.fillStyle = "#BFC7D5";
+        ctx.fillStyle = "#C7D0DC";
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
         ctx.fillText(label.slice(0, 28), node.x, node.y + r + 2);
@@ -252,7 +275,9 @@ function initGraph() {
       ctx.fill();
     })
     .onNodeHover((node) => {
-      markActivity();
+      // Hovering is not "input" — it must not wake the idle animation.
+      // Highlighting only happens once you've actually interacted (browse mode).
+      if (mode !== "browse") return;
       highlightNodes.clear();
       highlightLinks.clear();
       if (node) {
@@ -293,8 +318,8 @@ function initGraph() {
   Graph.cooldownTime(2500);     // settle the layout fairly quickly, then float
   Graph.resumeAnimation();      // keep the render loop running so fades never freeze
 
-  // Treat graph interaction as activity (drives idle ↔ browse).
-  el.addEventListener("pointermove", markActivity);
+  // Only genuine input (click / drag / scroll-zoom) drops out of the idle
+  // animation — not hovering or moving the cursor over the graph.
   el.addEventListener("wheel", markActivity, { passive: true });
   el.addEventListener("pointerdown", markActivity);
 
@@ -308,6 +333,14 @@ function sizeGraph() {
   const pane = $("graphpane");
   if (Graph) Graph.width(pane.clientWidth).height(pane.clientHeight);
 }
+
+// Reset / fit the whole graph back into view (after panning/zooming away).
+function resetView() {
+  if (!Graph) return;
+  markActivity();
+  Graph.zoomToFit(500, 40);
+}
+$("btn-reset-view").onclick = resetView;
 
 function renderGraph(g) {
   lastGraph = g; // keep the full graph (palette, cluster detail use it)
@@ -834,6 +867,7 @@ const COMMANDS = [
   { label: "Review due notes", hint: "study", run: () => $("review")?.scrollIntoView({ behavior: "smooth" }) },
   { label: "Import files", hint: "", run: () => $("btn-import").click() },
   { label: "Export to zip", hint: "", run: () => $("btn-export").click() },
+  { label: "Reset / fit graph view", hint: "graph", run: () => resetView() },
   { label: "Show all (clear graph filter)", hint: "graph", run: () => resetFilter() },
   { label: "Toggle orphan notes", hint: "graph", run: () => toggleOrphans() },
 ];
@@ -919,6 +953,9 @@ window.addEventListener("keydown", (e) => {
   } else if (e.key === "Escape") {
     if (!paletteEl.classList.contains("hidden")) closePalette();
     if (!$("quiz").classList.contains("hidden")) closeQuiz();
+  } else if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag !== "input" && tag !== "textarea") { e.preventDefault(); resetView(); }
   }
 });
 

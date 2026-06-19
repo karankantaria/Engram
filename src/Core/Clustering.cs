@@ -8,12 +8,16 @@ namespace Engram;
 /// </summary>
 internal static class Clustering
 {
-    // Terminal-friendly palette; cycled by cluster index.
+    // Brand-harmonized palette, cycled by cluster index. Leads with engram's
+    // own node colors (green/cyan/amber/magenta), then a wide, distinct spread
+    // so many clusters stay visually separable.
     private static readonly string[] Palette =
     {
-        "#5CCFE6", "#BAE67E", "#FFD580", "#FF6666", "#D4BFFF",
-        "#73D0FF", "#F28779", "#95E6CB", "#FFA759", "#C3A6FF",
-        "#80D4FF", "#E6DB74", "#A6E22E", "#FD971F", "#AE81FF",
+        "#43E08B", "#5CC7F5", "#F5B657", "#F07CC0", // brand node colors
+        "#6CF0EA", "#BFA0FF", "#FF8F6B", "#9CE85C",
+        "#7C9CFF", "#FFD479", "#E879F9", "#4FD6B8",
+        "#FF6B8A", "#B8E04F", "#5CD0FF", "#C68BFF",
+        "#F2A65A", "#59E0C4", "#86A8FF", "#FF9EC4",
     };
 
     public static (List<(long clusterId, string name, string color)> clusters,

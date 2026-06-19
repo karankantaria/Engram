@@ -233,7 +233,7 @@ internal sealed class NoteService
         var nodes = notes.Select(n =>
         {
             long cl = n.ClusterId ?? 0;
-            var color = cl != 0 && colorByCluster.TryGetValue(cl, out var c) ? c : "#5C6370";
+            var color = cl != 0 && colorByCluster.TryGetValue(cl, out var c) ? c : "#5C6675";
             return new GraphNode(n.Id, n.Title, cl, color, Snippet(n.Body), n.Body.Length);
         }).ToList();
 
@@ -260,7 +260,7 @@ internal sealed class NoteService
             {
                 var n = notes[x.id];
                 long cl = n.ClusterId ?? 0;
-                var color = cl != 0 && clusters.TryGetValue(cl, out var c) ? c.color : "#5C6370";
+                var color = cl != 0 && clusters.TryGetValue(cl, out var c) ? c.color : "#5C6675";
                 return new SearchHit(n.Id, n.Title, Snippet(n.Body), Math.Round(x.score, 4), cl, color);
             })
             .ToList();
@@ -285,7 +285,7 @@ internal sealed class NoteService
             {
                 var n = notes[x.id];
                 long cl = n.ClusterId ?? 0;
-                var color = cl != 0 && clusters.TryGetValue(cl, out var c) ? c.color : "#5C6370";
+                var color = cl != 0 && clusters.TryGetValue(cl, out var c) ? c.color : "#5C6675";
                 return (n, x.score, color);
             })
             .ToList();

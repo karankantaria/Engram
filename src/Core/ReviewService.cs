@@ -28,7 +28,7 @@ internal sealed class ReviewService
         return due.Select(d =>
         {
             long cl = byCluster.GetValueOrDefault(d.id);
-            var color = cl != 0 && clusters.TryGetValue(cl, out var c) ? c.color : "#5C6370";
+            var color = cl != 0 && clusters.TryGetValue(cl, out var c) ? c.color : "#5C6675";
             return new ReviewItem(d.id, d.title, Snippet(d.body), color);
         }).ToList();
     }

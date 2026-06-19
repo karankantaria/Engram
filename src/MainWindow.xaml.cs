@@ -75,6 +75,7 @@ public partial class MainWindow : Window
         _quiz = new QuizService(_db);
         _review = new ReviewService(_db);
 
+        ApplyBranding();
         SetupTray();
         _hotkey = new GlobalHotkey(this,
             GlobalHotkey.MOD_CONTROL | GlobalHotkey.MOD_ALT, GlobalHotkey.VK_SPACE, OnHotkey);
@@ -367,11 +368,47 @@ public partial class MainWindow : Window
 
     // ---- tray + hotkey ----------------------------------------------------
 
+    private static string AssetPath(string name) =>
+        System.IO.Path.Combine(AppContext.BaseDirectory, "assets", name);
+
+    /// <summary>Apply user-supplied branding if present (window/title-bar; the
+    /// exe icon + splash are wired at build time). All optional.</summary>
+    private void ApplyBranding()
+    {
+        var ico = AssetPath("engram.ico");
+        if (System.IO.File.Exists(ico))
+            try { Icon = new System.Windows.Media.Imaging.BitmapImage(new Uri(ico)); } catch { }
+
+        var logo = AssetPath("logo.png");
+        if (System.IO.File.Exists(logo))
+        {
+            try
+            {
+                LogoImg.Source = new System.Windows.Media.Imaging.BitmapImage(new Uri(logo));
+                LogoImg.Height = 18;
+                LogoImg.Visibility = Visibility.Visible;
+                TitleText.Visibility = Visibility.Collapsed; // logo already has the wordmark
+            }
+            catch { }
+        }
+    }
+
     private void SetupTray()
     {
+        System.Drawing.Icon trayIcon;
+        try
+        {
+            // Prefer the dedicated monochrome tray icon, then the app icon.
+            var tray = AssetPath("engram-tray.ico");
+            var app = AssetPath("engram.ico");
+            var path = System.IO.File.Exists(tray) ? tray : (System.IO.File.Exists(app) ? app : null);
+            trayIcon = path is not null ? new System.Drawing.Icon(path) : System.Drawing.SystemIcons.Application;
+        }
+        catch { trayIcon = System.Drawing.SystemIcons.Application; }
+
         _tray = new System.Windows.Forms.NotifyIcon
         {
-            Icon = System.Drawing.SystemIcons.Application,
+            Icon = trayIcon,
             Visible = true,
             Text = "engram — Ctrl+Alt+Space",
         };

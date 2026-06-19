@@ -10,7 +10,6 @@
     <AssemblyName>engram</AssemblyName>
     <RootNamespace>Engram</RootNamespace>
     <Version>0.1.0</Version>
-    <ApplicationIcon></ApplicationIcon>
     <!-- Single-file publish target: win-x64 self-contained. Web assets + model
          are extracted alongside the exe on first run (see AssetManager). -->
     <RuntimeIdentifier Condition="'$(PublishSingleFile)' == 'true'">win-x64</RuntimeIdentifier>
@@ -35,6 +34,20 @@
     <EmbeddedResource Include="web\**\*">
       <LogicalName>web/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>
+  </ItemGroup>
+
+  <!-- User-supplied branding (all optional; picked up at build time if present).
+       Drop files into assets\: engram.ico, splash.png, logo.png. -->
+  <PropertyGroup Condition="Exists('assets\engram.ico')">
+    <ApplicationIcon>assets\engram.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Native WPF splash: painted instantly at launch, before any code runs. -->
+    <SplashScreen Include="assets\splash.png" Condition="Exists('assets\splash.png')" />
+    <!-- Copied next to the exe so the window/tray icon + title-bar logo load at runtime. -->
+    <Content Include="assets\engram.ico" CopyToOutputDirectory="PreserveNewest" Condition="Exists('assets\engram.ico')" />
+    <Content Include="assets\engram-tray.ico" CopyToOutputDirectory="PreserveNewest" Condition="Exists('assets\engram-tray.ico')" />
+    <Content Include="assets\logo.png" CopyToOutputDirectory="PreserveNewest" Condition="Exists('assets\logo.png')" />
   </ItemGroup>
 
   <!-- The ONNX model + tokenizer vocab are large; keep them as loose content

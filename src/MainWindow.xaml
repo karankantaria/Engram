@@ -6,14 +6,14 @@
         Height="760" Width="1180"
         MinHeight="420" MinWidth="640"
         WindowStartupLocation="CenterScreen"
-        Background="#0B0E14"
+        Background="#0B0F15"
         WindowStyle="None"
         AllowsTransparency="False"
         ResizeMode="CanResizeWithGrip">
     <Window.Resources>
         <Style x:Key="ChromeButton" TargetType="Button">
             <Setter Property="Width" Value="40" />
-            <Setter Property="Foreground" Value="#5C6370" />
+            <Setter Property="Foreground" Value="#5C6675" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, monospace" />
@@ -26,7 +26,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="bg" Property="Background" Value="#1F2430" />
+                                <Setter TargetName="bg" Property="Background" Value="#19212D" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -43,7 +43,7 @@
         </Style>
     </Window.Resources>
 
-    <Border BorderBrush="#1F2430" BorderThickness="1">
+    <Border BorderBrush="#19212D" BorderThickness="1">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="28" />
@@ -51,14 +51,19 @@
             </Grid.RowDefinitions>
 
             <!-- Custom terminal-style title bar -->
-            <Grid Grid.Row="0" Background="#0B0E14" MouseLeftButtonDown="TitleBar_MouseDown">
+            <Grid Grid.Row="0" Background="#0B0F15" MouseLeftButtonDown="TitleBar_MouseDown">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="  engram — second brain"
-                           Foreground="#5C6370" FontFamily="Cascadia Mono, Consolas, monospace"
-                           FontSize="12" VerticalAlignment="Center" Margin="6,0,0,0" />
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Image x:Name="LogoImg" Height="16" Margin="8,0,0,0"
+                           VerticalAlignment="Center" Visibility="Collapsed"
+                           RenderOptions.BitmapScalingMode="HighQuality" />
+                    <TextBlock x:Name="TitleText" Text="  engram — second brain"
+                               Foreground="#5C6675" FontFamily="Cascadia Mono, Consolas, monospace"
+                               FontSize="12" VerticalAlignment="Center" Margin="2,0,0,0" />
+                </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
                     <Button Content="—" Click="Minimize_Click" Style="{StaticResource ChromeButton}" />
                     <Button Content="▢" Click="Maximize_Click" Style="{StaticResource ChromeButton}" />
@@ -71,13 +76,13 @@
                   DragLeave="WebHost_DragLeave" Drop="WebHost_Drop">
                 <wv2:WebView2 x:Name="Web" />
                 <Border x:Name="DropOverlay" Visibility="Collapsed" IsHitTestVisible="False"
-                        Background="#E60B0E14" BorderBrush="#5CCFE6" BorderThickness="2" Margin="28">
+                        Background="#E60B0F15" BorderBrush="#43E08B" BorderThickness="2" Margin="28">
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <TextBlock Text="⇪" FontSize="44" Foreground="#5CCFE6" HorizontalAlignment="Center" />
-                        <TextBlock Text="drop files to import" Foreground="#BFC7D5"
+                        <TextBlock Text="⇪" FontSize="44" Foreground="#43E08B" HorizontalAlignment="Center" />
+                        <TextBlock Text="drop files to import" Foreground="#C7D0DC"
                                    FontFamily="Cascadia Mono, Consolas, monospace" FontSize="16"
                                    Margin="0,10,0,0" HorizontalAlignment="Center" />
-                        <TextBlock Text="markdown · text · pdf — auto-split into notes" Foreground="#5C6370"
+                        <TextBlock Text="markdown · text · pdf — auto-split into notes" Foreground="#5C6675"
                                    FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12"
                                    Margin="0,4,0,0" HorizontalAlignment="Center" />
                     </StackPanel>
