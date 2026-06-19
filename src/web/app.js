@@ -53,6 +53,88 @@ let Graph = null;
 let currentNoteId = null;
 let lastGraph = { nodes: [], links: [], clusters: [] };
 
+// ---- graph mode: 'idle' (ambient neural firing) vs 'browse' (calm/interactive)
+const IDLE_AFTER_MS = 7000;
+let mode = "idle";
+let pulse = 1;            // eased 1=idle … 0=browse: drives glow, float, particle fade
+let lastActivity = 0;
+let settled = false;     // true once the initial layout has cooled (we own positions after)
+let draggingNode = null;
+const highlightNodes = new Set();
+const highlightLinks = new Set();
+
+function markActivity() {
+  lastActivity = performance.now();
+  if (mode !== "browse") setMode("browse");
+}
+
+function setMode(m) {
+  if (m === mode) return;
+  mode = m;
+  if (mode === "idle") { highlightNodes.clear(); highlightLinks.clear(); }
+  if (Graph) Graph.linkDirectionalParticles(particleAccessor); // refresh emitters
+}
+
+// idle: signals fire along every synapse; browse: only along the focused node's
+function particleAccessor(l) {
+  if (mode === "idle") {
+    const w = l.weight || 0;
+    return w > 0.6 ? 3 : w > 0.45 ? 2 : 1;
+  }
+  return highlightLinks.has(l) ? 2 : 0;
+}
+
+function hexA(hex, a) {
+  const h = (hex || "#5C6370").replace("#", "");
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+// One rAF loop: eases the ambient factor, gently floats the nodes when idle
+// (easing them back to their settled home as it fades), and returns to idle
+// after a quiet spell. force-graph renders continuously (resumeAnimation), so
+// these changes are drawn every frame — no freeze on transition.
+function animateMode() {
+  const now = performance.now();
+  const target = mode === "idle" ? 1 : 0;
+  pulse += (target - pulse) * 0.05;
+  if (mode === "browse" && now - lastActivity > IDLE_AFTER_MS) setMode("idle");
+
+  if (Graph && settled && pulse > 0.004) {
+    const t = now / 1000;
+    const amp = 11 * pulse; // float radius in graph units, fades with ambient
+    for (const n of Graph.graphData().nodes) {
+      if (n === draggingNode || n.bx == null) continue;
+      n.x = n.bx + Math.sin(t * n.f1 + n.ph) * amp;
+      n.y = n.by + Math.cos(t * n.f2 + n.ph * 1.3) * amp;
+    }
+  }
+  requestAnimationFrame(animateMode);
+}
+
+// Capture each node's settled "home" + a unique drift phase/frequency.
+function captureHome() {
+  for (const n of Graph.graphData().nodes) {
+    n.bx = n.x;
+    n.by = n.y;
+    if (n.ph == null) {
+      n.ph = Math.random() * Math.PI * 2;
+      n.f1 = 0.25 + Math.random() * 0.35;
+      n.f2 = 0.25 + Math.random() * 0.35;
+    }
+  }
+  settled = true;
+}
+
+// Node radius scales with the note's content size. Square-root scaling so the
+// node *area* tracks data volume (4x the data ≈ 2x the radius), clamped.
+function nodeRadius(node) {
+  const len = node.size || 0;
+  return Math.max(3, Math.min(16, 3 + Math.sqrt(len) / 4));
+}
+
 // ---- toast ------------------------------------------------------------
 let toastTimer = null;
 function toast(msg) {
@@ -65,41 +147,121 @@ function toast(msg) {
 
 // ---- graph ------------------------------------------------------------
 function initGraph() {
-  Graph = ForceGraph()(document.getElementById("graph"))
+  const el = document.getElementById("graph");
+  Graph = ForceGraph()(el)
     .backgroundColor("#0B0E14")
     .nodeId("id")
     .nodeRelSize(5)
     .nodeColor((n) => n.color)
-    .linkColor(() => "rgba(92,103,112,0.35)")
-    .linkWidth((l) => 0.5 + (l.weight || 0) * 1.8)
-    .nodeCanvasObjectMode(() => "after")
+    .cooldownTime(4000)
+    .linkColor((l) => {
+      if (mode === "browse" && highlightLinks.size)
+        return highlightLinks.has(l) ? "rgba(92,207,230,0.55)" : "rgba(92,103,112,0.07)";
+      return "rgba(92,103,112,0.28)";
+    })
+    .linkWidth((l) => (highlightLinks.has(l) ? 2.2 : 0.5 + (l.weight || 0) * 1.5))
+    .linkDirectionalParticles(particleAccessor)
+    .linkDirectionalParticleSpeed((l) => 0.003 + (l.weight || 0) * 0.006)
+    .linkDirectionalParticleWidth(2)
+    .linkDirectionalParticleColor(() => "rgba(92,207,230,0.9)")
+    .nodeCanvasObjectMode(() => "replace")
     .nodeCanvasObject((node, ctx, scale) => {
-      // node dot
+      const now = performance.now();
+      const r = nodeRadius(node);
+      const dim = mode === "browse" && highlightNodes.size && !highlightNodes.has(node.id);
+
+      // Ambient pulse glow — asynchronous per node for a "firing" feel.
+      if (pulse > 0.02 && !dim) {
+        const phase = (Number(node.id) % 100) * 0.7;
+        const beat = 0.5 + 0.5 * Math.sin(now / 620 + phase);
+        const glowR = r * (2.0 + 1.6 * beat);
+        const a = (0.18 + 0.34 * beat) * pulse;
+        const grad = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, glowR);
+        grad.addColorStop(0, hexA(node.color, a));
+        grad.addColorStop(1, hexA(node.color, 0));
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, glowR, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+
+      // Node core.
+      const hl = highlightNodes.has(node.id);
+      ctx.globalAlpha = dim ? 0.25 : 1;
       ctx.fillStyle = node.color;
       ctx.beginPath();
-      ctx.arc(node.x, node.y, 4, 0, 2 * Math.PI);
+      ctx.arc(node.x, node.y, hl ? r * 1.4 : r, 0, 2 * Math.PI);
       ctx.fill();
-      if (node.id === currentNoteId) {
-        ctx.strokeStyle = "#FFFFFF";
-        ctx.lineWidth = 1.2 / scale;
+      if (node.id === currentNoteId || hl) {
+        ctx.strokeStyle = node.id === currentNoteId ? "#FFFFFF" : "rgba(255,255,255,0.6)";
+        ctx.lineWidth = 1.4 / scale;
         ctx.stroke();
       }
-      // label only when zoomed in enough, to avoid clutter
-      if (scale > 1.3) {
+      ctx.globalAlpha = 1;
+
+      // Labels: when zoomed in, or for the focused node/neighbors while browsing.
+      if (!dim && (scale > 1.3 || (mode === "browse" && hl))) {
         const label = node.title || "";
         ctx.font = `${10 / scale}px Consolas, monospace`;
         ctx.fillStyle = "#BFC7D5";
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
-        ctx.fillText(label.slice(0, 28), node.x, node.y + 6);
+        ctx.fillText(label.slice(0, 28), node.x, node.y + r + 2);
       }
     })
+    .nodePointerAreaPaint((node, color, ctx) => {
+      // Keep hover/click hit-area matching the drawn (data-scaled) radius.
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, nodeRadius(node) + 2, 0, 2 * Math.PI);
+      ctx.fill();
+    })
+    .onNodeHover((node) => {
+      markActivity();
+      highlightNodes.clear();
+      highlightLinks.clear();
+      if (node) {
+        highlightNodes.add(node.id);
+        Graph.graphData().links.forEach((l) => {
+          const s = l.source.id ?? l.source;
+          const t = l.target.id ?? l.target;
+          if (s === node.id || t === node.id) {
+            highlightLinks.add(l);
+            highlightNodes.add(s);
+            highlightNodes.add(t);
+          }
+        });
+      }
+      Graph.linkDirectionalParticles(particleAccessor);
+    })
     .onNodeClick((node) => {
+      markActivity();
       openNote(node.id);
       Graph.centerAt(node.x, node.y, 600);
+    })
+    .onNodeDrag((node) => { markActivity(); draggingNode = node; })
+    .onNodeDragEnd((node) => { node.bx = node.x; node.by = node.y; draggingNode = null; })
+    .onZoom(markActivity)
+    .onEngineStop(captureHome) // initial layout cooled → we own positions (floating)
+    .onBackgroundClick(() => {
+      markActivity();
+      highlightNodes.clear();
+      highlightLinks.clear();
+      Graph.linkDirectionalParticles(particleAccessor);
     });
+
+  Graph.cooldownTime(2500);     // settle the layout fairly quickly, then float
+  Graph.resumeAnimation();      // keep the render loop running so fades never freeze
+
+  // Treat graph interaction as activity (drives idle ↔ browse).
+  el.addEventListener("pointermove", markActivity);
+  el.addEventListener("wheel", markActivity, { passive: true });
+  el.addEventListener("pointerdown", markActivity);
+
   window.addEventListener("resize", sizeGraph);
   sizeGraph();
+  lastActivity = performance.now();
+  requestAnimationFrame(animateMode);
 }
 
 function sizeGraph() {
@@ -109,11 +271,18 @@ function sizeGraph() {
 
 function renderGraph(g) {
   lastGraph = g;
+  // Stale highlights reference old link objects after a data swap.
+  highlightNodes.clear();
+  highlightLinks.clear();
+  // New data → let the engine re-lay-out, then re-home on the next stop.
+  settled = false;
+  draggingNode = null;
   // force-graph mutates link source/target into objects; clone for safety.
   Graph.graphData({
     nodes: g.nodes.map((n) => ({ ...n })),
     links: g.links.map((l) => ({ source: l.source, target: l.target, weight: l.weight })),
   });
+  Graph.resumeAnimation();
   renderLegend(g.clusters);
   $("statusline").textContent =
     `${g.nodes.length} notes · ${g.links.length} links · ${g.clusters.length} clusters`;

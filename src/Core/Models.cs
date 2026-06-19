@@ -11,8 +11,9 @@ public sealed record Note(
     string Body,
     long? ClusterId);
 
-/// <summary>One node in the force-graph (a note).</summary>
-public sealed record GraphNode(long id, string title, long cluster, string color, string snippet);
+/// <summary>One node in the force-graph (a note). <c>size</c> is the note's
+/// content length in characters — the frontend scales the node radius from it.</summary>
+public sealed record GraphNode(long id, string title, long cluster, string color, string snippet, int size);
 
 /// <summary>One similarity edge between two notes.</summary>
 public sealed record GraphLink(long source, long target, double weight);

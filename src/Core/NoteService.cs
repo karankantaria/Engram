@@ -234,7 +234,7 @@ internal sealed class NoteService
         {
             long cl = n.ClusterId ?? 0;
             var color = cl != 0 && colorByCluster.TryGetValue(cl, out var c) ? c : "#5C6370";
-            return new GraphNode(n.Id, n.Title, cl, color, Snippet(n.Body));
+            return new GraphNode(n.Id, n.Title, cl, color, Snippet(n.Body), n.Body.Length);
         }).ToList();
 
         return new GraphData(nodes, edges, clusters);
