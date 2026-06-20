@@ -117,8 +117,41 @@ internal static class SelfTest
             sb.AppendLine($"name persistence : '{keepName}' survived {(namePersisted ? "yes" : "NO")} " +
                           $"(across reindexes; summary intact = {kept?.summary == keepSummary})");
 
+            // Incremental indexing correctness. Grow the corpus past the
+            // fallback guard (64) so captures actually take the incremental
+            // ReindexFor branch, then assert the incrementally-built edge set
+            // contains every edge a full from-scratch rebuild produces — i.e. no
+            // edge is ever lost. Five loose themes give a non-trivial graph.
+            string[] themes =
+            {
+                "investing in the stock market with equities bonds and dividends",
+                "cooking italian pasta with tomato sauce garlic and fresh basil",
+                "training deep neural networks with gradient descent and backprop",
+                "hiking alpine mountain trails and wild camping under the stars",
+                "the roman empire its emperors legions and eventual decline",
+            };
+            for (int i = 0; i < 70; i++)
+                notes.Capture($"Entry {i}: more notes on {themes[i % themes.Length]} (item {i}).");
+            int corpus = notes.GetAllNotes().Count;
+            // Two probes similar to existing themes → exercise the affected-node
+            // recompute path (existing notes whose top-K shifts).
+            notes.Capture("Reflections on equities, bond yields and dividend investing strategy.");
+            notes.Capture("Notes on backpropagation and gradient descent for neural nets.");
+
+            static HashSet<(long, long)> EdgeSet(GraphData g) =>
+                g.links.Select(l => l.source < l.target ? (l.source, l.target) : (l.target, l.source)).ToHashSet();
+            var incrementalEdges = EdgeSet(notes.GetGraph());
+            notes.Reindex(); // exact full rebuild on the same data
+            var fullEdges = EdgeSet(notes.GetGraph());
+            bool noEdgesLost = fullEdges.IsSubsetOf(incrementalEdges);
+            bool exercisedIncremental = corpus > 64;
+            sb.AppendLine();
+            sb.AppendLine($"incremental edges: {incrementalEdges.Count} (full rebuild {fullEdges.Count}); " +
+                          $"corpus {corpus} (>64 = {exercisedIncremental}); superset of exact = {noEdgesLost}");
+
             bool ok = after > before && imp.notes >= 4 && localCount == 3 && milkDone
-                      && dueBefore > 0 && dueAfter == dueBefore - 1 && namePersisted;
+                      && dueBefore > 0 && dueAfter == dueBefore - 1 && namePersisted
+                      && exercisedIncremental && noEdgesLost;
             sb.AppendLine();
             sb.AppendLine(ok ? "RESULT: PASS" : "RESULT: FAIL");
         }

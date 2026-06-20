@@ -16,6 +16,9 @@ internal sealed class NoteService
     private const double SimThreshold = 0.33;
     // Cap edges per note so the graph stays readable.
     private const int MaxNeighbors = 8;
+    // Every Nth note, an incremental add does a full exact rebuild instead, to
+    // sweep up the small edge surplus the incremental path can accumulate.
+    private const int FullReindexEvery = 50;
 
     private readonly Database _db;
     private readonly IEmbedder _embedder;
@@ -36,7 +39,7 @@ internal sealed class NoteService
     public Note Capture(string text)
     {
         var id = AddNoteCore(text);
-        Reindex();
+        ReindexFor(new[] { id });
         return _db.GetNote(id)!;
     }
 
@@ -80,6 +83,7 @@ internal sealed class NoteService
     public ImportResult ImportFiles(IEnumerable<string> paths)
     {
         int files = 0, notes = 0, skipped = 0;
+        var added = new List<long>();
         foreach (var path in ExpandPaths(paths))
         {
             var extracted = FileImporter.Extract(path);
@@ -88,10 +92,10 @@ internal sealed class NoteService
             var chunks = Chunker.Chunk(extracted.Value.Text, extracted.Value.Markdown);
             if (chunks.Count == 0) { skipped++; continue; }
 
-            foreach (var c in chunks) { AddNoteCore(c); notes++; }
+            foreach (var c in chunks) { added.Add(AddNoteCore(c)); notes++; }
             files++;
         }
-        if (notes > 0) Reindex();
+        if (added.Count > 0) ReindexFor(added);
         return new ImportResult(files, notes, skipped);
     }
 
@@ -123,7 +127,7 @@ internal sealed class NoteService
         _db.UpdateNote(id, title, text, now);
         File.WriteAllText(existing.Path, text);
         _db.SaveEmbedding(id, _embedder.Embed(EmbedInput(title, text)));
-        Reindex();
+        ReindexFor(new[] { id });
         return _db.GetNote(id);
     }
 
@@ -140,20 +144,93 @@ internal sealed class NoteService
 
     // ---- indexing ---------------------------------------------------------
 
-    /// <summary>Recompute edges and clusters from current embeddings.</summary>
+    /// <summary>Full recompute of edges and clusters from all embeddings. O(n²)
+    /// in the note count — used on structural changes (delete/merge) and as the
+    /// exact rebuild. Adds/updates use the cheaper <see cref="ReindexFor"/>.</summary>
     public void Reindex()
     {
-        // Snapshot the previous cluster assignment + metadata BEFORE we replace
-        // it, so librarian-assigned names/summaries can be carried forward.
-        var oldMeta = _db.GetClusters().ToDictionary(c => c.id, c => (c.name, c.summary));
-        var oldAssign = _db.GetAllNotes()
-            .Where(n => n.ClusterId is not null)
-            .ToDictionary(n => n.Id, n => n.ClusterId!.Value);
-
+        var (oldMeta, oldAssign) = SnapshotClusters();
         var emb = _db.GetAllEmbeddings();
         var edges = ComputeEdges(emb);
+        ApplyAcceptedLinks(edges, emb);
+        Persist(emb, edges, oldMeta, oldAssign);
+    }
 
-        // Re-apply user-accepted links so they survive recomputation.
+    /// <summary>
+    /// Incremental reindex after adding/updating <paramref name="changedIds"/>.
+    /// Only the changed notes — and existing notes similar to them — have their
+    /// top-K neighbours recomputed (O(changed·n) cosines); every other edge is
+    /// carried over untouched. This avoids the full O(n²) recompute on each
+    /// capture. It never drops a still-valid edge (carried edges are a superset
+    /// of the exact result), so the graph can't drift; a periodic full
+    /// <see cref="Reindex"/> (on delete/merge) keeps it tight. Falls back to a
+    /// full reindex when the graph is small or a large fraction changed.
+    /// </summary>
+    public void ReindexFor(IReadOnlyCollection<long> changedIds)
+    {
+        var emb = _db.GetAllEmbeddings();
+        var changed = changedIds.Where(emb.ContainsKey).ToHashSet();
+        // Fall back to a full rebuild when: nothing valid changed; the graph is
+        // small enough that the quadratic cost is trivial; a large fraction
+        // changed (incremental bookkeeping isn't worth it); or periodically, so
+        // the small edge surplus incremental can leave (carried displaced
+        // neighbours) is swept up even for capture-only users who never trigger
+        // a structural rebuild via delete/merge.
+        if (changed.Count == 0 || emb.Count <= 64 || changed.Count * 4 >= emb.Count
+            || emb.Count % FullReindexEvery == 0)
+        {
+            Reindex();
+            return;
+        }
+
+        var (oldMeta, oldAssign) = SnapshotClusters();
+        var ids = emb.Keys.ToList();
+
+        // 1. Recompute each changed note's top-K, collecting the existing notes
+        //    that are similar to it ("affected" — their top-K may shift too).
+        var affected = new HashSet<long>();
+        var fresh = new List<GraphLink>();
+        foreach (var c in changed)
+            fresh.AddRange(TopKEdges(c, ids, emb, changed, affected));
+
+        // 2. Recompute the affected existing notes' top-K as well.
+        foreach (var a in affected)
+            fresh.AddRange(TopKEdges(a, ids, emb, null, null));
+
+        // 3. Carry over every edge not incident to a *changed* note, then merge
+        //    in the freshly computed edges (keeping the larger weight on dupes).
+        var merged = new Dictionary<(long, long), double>();
+        foreach (var e in _db.GetAllEdges())
+        {
+            if (changed.Contains(e.source) || changed.Contains(e.target)) continue;
+            merged[Key(e.source, e.target)] = e.weight;
+        }
+        foreach (var e in fresh)
+        {
+            var k = Key(e.source, e.target);
+            if (!merged.TryGetValue(k, out var w) || e.weight > w) merged[k] = e.weight;
+        }
+
+        var edges = merged.Select(kv => new GraphLink(kv.Key.Item1, kv.Key.Item2, kv.Value)).ToList();
+        ApplyAcceptedLinks(edges, emb);
+        Persist(emb, edges, oldMeta, oldAssign);
+    }
+
+    /// <summary>Snapshot cluster metadata + assignment BEFORE replacing them, so
+    /// librarian-assigned names/summaries can be carried forward.</summary>
+    private (Dictionary<long, (string name, string summary)> meta, Dictionary<long, long> assign) SnapshotClusters()
+    {
+        var meta = _db.GetClusters().ToDictionary(c => c.id, c => (c.name, c.summary));
+        var assign = _db.GetAllNotes()
+            .Where(n => n.ClusterId is not null)
+            .ToDictionary(n => n.Id, n => n.ClusterId!.Value);
+        return (meta, assign);
+    }
+
+    /// <summary>Re-apply user-accepted links (weight 1.0) so they survive a
+    /// recompute even when they fall below the similarity threshold.</summary>
+    private void ApplyAcceptedLinks(List<GraphLink> edges, Dictionary<long, float[]> emb)
+    {
         var present = new HashSet<(long, long)>(edges.Select(e => Key(e.source, e.target)));
         foreach (var (a, b) in _db.GetAcceptedLinks())
         {
@@ -161,10 +238,38 @@ internal sealed class NoteService
             var k = Key(a, b);
             if (present.Add(k)) edges.Add(new GraphLink(k.Item1, k.Item2, 1.0));
         }
+    }
 
+    /// <summary>Write the edge set, recompute clusters, and persist them with
+    /// carried-over names/summaries.</summary>
+    private void Persist(Dictionary<long, float[]> emb, List<GraphLink> edges,
+        Dictionary<long, (string name, string summary)> oldMeta, Dictionary<long, long> oldAssign)
+    {
         _db.ReplaceAllEdges(edges);
         var (clusters, map) = Clustering.Compute(emb.Keys.ToList(), edges);
         _db.ReplaceClusters(CarryClusterMeta(clusters, map, oldMeta, oldAssign), map);
+    }
+
+    /// <summary>A node's top-K neighbours above the similarity threshold, as
+    /// directed edges. If <paramref name="affected"/> is supplied, any neighbour
+    /// not in <paramref name="exclude"/> is recorded there (notes whose own top-K
+    /// may have shifted because of this node).</summary>
+    private static IEnumerable<GraphLink> TopKEdges(long node, List<long> ids,
+        Dictionary<long, float[]> emb, HashSet<long>? exclude, HashSet<long>? affected)
+    {
+        var v = emb[node];
+        var sims = new List<(long other, double w)>();
+        foreach (var o in ids)
+        {
+            if (o == node) continue;
+            double s = Cosine(v, emb[o]);
+            if (s < SimThreshold) continue;
+            sims.Add((o, s));
+            if (affected is not null && (exclude is null || !exclude.Contains(o))) affected.Add(o);
+        }
+        return sims.OrderByDescending(x => x.w).Take(MaxNeighbors)
+                   .Select(x => new GraphLink(node, x.other, Math.Round(x.w, 4)))
+                   .ToList();
     }
 
     /// <summary>Cluster ids are renumbered on every reindex, so a librarian's
