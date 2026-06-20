@@ -202,7 +202,9 @@ function makeCollideForce(pad) {
 // clusters settle into distinct regions instead of collapsing onto each other.
 let clusterAnchors = {};
 function computeClusterAnchors(nodes) {
-  const ids = [...new Set(nodes.map((n) => n.cluster ?? 0))];
+  // Sort by cluster id so a given cluster keeps the same anchor slot across
+  // re-renders (adding a note to an existing cluster won't reshuffle the ring).
+  const ids = [...new Set(nodes.map((n) => n.cluster ?? 0))].sort((a, b) => a - b);
   clusterAnchors = {};
   const R = 90 + ids.length * 55; // ring radius scales with how many clusters
   ids.forEach((cid, i) => {
@@ -423,11 +425,31 @@ function applyFilter() {
 
   highlightNodes.clear();
   highlightLinks.clear();
-  settled = false;       // re-layout the filtered set, then re-home
+  settled = false;       // re-layout, then re-home (captureHome on engine stop)
   draggingNode = null;
   computeClusterAnchors(nodes);
+
+  // Preserve the live positions of nodes that are already on screen, so a
+  // capture/refresh nudges the existing layout instead of re-spreading the
+  // whole graph from the origin (which, since capture deliberately doesn't
+  // refit the camera, would leave it off-viewport — i.e. "the graph vanished").
+  // Genuinely-new nodes are seeded next to their cluster anchor so they ease in
+  // locally rather than flying across the view.
+  const prev = new Map((Graph.graphData().nodes || []).map((n) => [n.id, n]));
+  const built = nodes.map((n) => {
+    const p = prev.get(n.id);
+    if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
+      return Object.assign({ ...n }, {
+        x: p.x, y: p.y, vx: p.vx, vy: p.vy,
+        bx: p.bx, by: p.by, ph: p.ph, f1: p.f1, f2: p.f2,
+      });
+    }
+    const a = clusterAnchors[n.cluster ?? 0] || { x: 0, y: 0 };
+    return Object.assign({ ...n }, { x: a.x + (Math.random() - 0.5) * 40, y: a.y + (Math.random() - 0.5) * 40 });
+  });
+
   Graph.graphData({
-    nodes: nodes.map((n) => ({ ...n })),
+    nodes: built,
     links: links.map((l) => ({ source: l.source, target: l.target, weight: l.weight })),
   });
   Graph.resumeAnimation();
