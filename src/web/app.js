@@ -571,9 +571,15 @@ capture.addEventListener("keydown", async (e) => {
 });
 
 // ---- reader -----------------------------------------------------------
+// Note bodies are arbitrary user content (incl. imported markdown/PDF text),
+// so the rendered HTML is sanitized before it ever touches innerHTML. This
+// strips <script>, event-handler attributes (onerror/onload/…), javascript:
+// URLs, etc. — closing the injection vector into the WebView bridge.
 function renderMarkdown(text) {
-  try { return marked.parse(text || ""); }
-  catch { return esc(text || ""); }
+  try {
+    const html = marked.parse(text || "");
+    return window.DOMPurify ? window.DOMPurify.sanitize(html) : esc(text || "");
+  } catch { return esc(text || ""); }
 }
 
 function setReaderMode(editing) {

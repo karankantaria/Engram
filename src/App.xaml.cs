@@ -10,7 +10,11 @@ namespace Engram;
 /// </summary>
 public partial class App : System.Windows.Application
 {
+    private const string ShowSignalName = "Engram.Show.4f1a";
+
     private Mutex? _single;
+    private EventWaitHandle? _showSignal;
+    private RegisteredWaitHandle? _showRegistration;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -42,16 +46,38 @@ public partial class App : System.Windows.Application
         _single = new Mutex(initiallyOwned: true, "Engram.SingleInstance.4f1a", out bool isNew);
         if (!isNew)
         {
+            // Already running (possibly hidden in the tray) — ask that instance
+            // to surface its window, then exit quietly.
+            try
+            {
+                if (EventWaitHandle.TryOpenExisting(ShowSignalName, out var ev))
+                {
+                    ev.Set();
+                    ev.Dispose();
+                }
+            }
+            catch { /* best effort */ }
             Shutdown();
             return;
         }
 
         base.OnStartup(e);
-        new MainWindow().Show();
+        var window = new MainWindow();
+
+        // Wait for a second instance to signal us; surface the window when it does.
+        _showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, ShowSignalName);
+        _showRegistration = ThreadPool.RegisterWaitForSingleObject(
+            _showSignal,
+            (_, _) => window.Dispatcher.BeginInvoke(new Action(window.SurfaceFromAnotherInstance)),
+            state: null, millisecondsTimeOutInterval: Timeout.Infinite, executeOnlyOnce: false);
+
+        window.Show();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _showRegistration?.Unregister(null);
+        _showSignal?.Dispose();
         if (_single is not null)
         {
             try { _single.ReleaseMutex(); } catch { }

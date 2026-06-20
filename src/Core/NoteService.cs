@@ -143,6 +143,13 @@ internal sealed class NoteService
     /// <summary>Recompute edges and clusters from current embeddings.</summary>
     public void Reindex()
     {
+        // Snapshot the previous cluster assignment + metadata BEFORE we replace
+        // it, so librarian-assigned names/summaries can be carried forward.
+        var oldMeta = _db.GetClusters().ToDictionary(c => c.id, c => (c.name, c.summary));
+        var oldAssign = _db.GetAllNotes()
+            .Where(n => n.ClusterId is not null)
+            .ToDictionary(n => n.Id, n => n.ClusterId!.Value);
+
         var emb = _db.GetAllEmbeddings();
         var edges = ComputeEdges(emb);
 
@@ -157,8 +164,52 @@ internal sealed class NoteService
 
         _db.ReplaceAllEdges(edges);
         var (clusters, map) = Clustering.Compute(emb.Keys.ToList(), edges);
-        _db.ReplaceClusters(clusters, map);
+        _db.ReplaceClusters(CarryClusterMeta(clusters, map, oldMeta, oldAssign), map);
     }
+
+    /// <summary>Cluster ids are renumbered on every reindex, so a librarian's
+    /// name/summary can't be matched by id. Instead, match each new cluster to
+    /// the old cluster the majority of its members came from, and carry the old
+    /// (non-default) name + summary forward. Each old cluster's name is reused
+    /// at most once (best-overlap wins) so a split doesn't duplicate it.</summary>
+    private static List<(long clusterId, string name, string color, string summary)> CarryClusterMeta(
+        List<(long clusterId, string name, string color)> fresh,
+        Dictionary<long, long> noteToCluster,
+        Dictionary<long, (string name, string summary)> oldMeta,
+        Dictionary<long, long> oldAssign)
+    {
+        // new cluster id -> { old cluster id -> shared-member count }
+        var overlap = new Dictionary<long, Dictionary<long, int>>();
+        foreach (var (noteId, newCid) in noteToCluster)
+        {
+            if (!oldAssign.TryGetValue(noteId, out var oldCid)) continue;
+            if (!overlap.TryGetValue(newCid, out var tally)) overlap[newCid] = tally = new();
+            tally[oldCid] = tally.GetValueOrDefault(oldCid) + 1;
+        }
+
+        var candidates = overlap
+            .SelectMany(kv => kv.Value.Select(o => (newCid: kv.Key, oldCid: o.Key, count: o.Value)))
+            .OrderByDescending(c => c.count);
+
+        var carried = new Dictionary<long, (string name, string summary)>();
+        var usedOld = new HashSet<long>();
+        foreach (var c in candidates)
+        {
+            if (carried.ContainsKey(c.newCid) || usedOld.Contains(c.oldCid)) continue;
+            if (!oldMeta.TryGetValue(c.oldCid, out var meta) || IsDefaultName(meta.name)) continue;
+            carried[c.newCid] = meta;
+            usedOld.Add(c.oldCid);
+        }
+
+        return fresh.Select(f => carried.TryGetValue(f.clusterId, out var m)
+            ? (f.clusterId, m.name, f.color, m.summary)
+            : (f.clusterId, f.name, f.color, "")).ToList();
+    }
+
+    /// <summary>True for the auto-generated "cluster N" placeholder names that
+    /// carry no user/librarian intent and aren't worth preserving.</summary>
+    private static bool IsDefaultName(string name) =>
+        System.Text.RegularExpressions.Regex.IsMatch(name ?? "", @"^cluster \d+$");
 
     private static (long, long) Key(long a, long b) => a < b ? (a, b) : (b, a);
 
@@ -297,6 +348,8 @@ internal sealed class NoteService
     public string ExportZip(string destPath)
     {
         if (File.Exists(destPath)) File.Delete(destPath);
+        // Fold the WAL into the main db file so the copied snapshot is complete.
+        _db.Checkpoint();
         using var zip = ZipFile.Open(destPath, ZipArchiveMode.Create);
         foreach (var file in Directory.EnumerateFiles(_notesDir, "*.md"))
             zip.CreateEntryFromFile(file, $"notes/{Path.GetFileName(file)}");

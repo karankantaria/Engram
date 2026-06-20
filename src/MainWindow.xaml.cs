@@ -429,6 +429,10 @@ public partial class MainWindow : Window
         Topmost = true; Topmost = false;
     }
 
+    /// <summary>Called (marshalled onto the UI thread) when a second instance is
+    /// launched: bring the existing window forward instead of silently exiting.</summary>
+    internal void SurfaceFromAnotherInstance() => ShowFromTray();
+
     private void OnHotkey()
     {
         ShowFromTray();

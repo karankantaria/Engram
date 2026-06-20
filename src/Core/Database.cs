@@ -276,9 +276,11 @@ CREATE TABLE IF NOT EXISTS suggestions(
 
     // ---- Clusters ----------------------------------------------------------
 
-    /// <summary>Rebuild clusters from a fresh assignment. Preserves existing
-    /// cluster names where a previous cluster maps to the same id slot.</summary>
-    public void ReplaceClusters(IReadOnlyList<(long clusterId, string name, string color)> clusters,
+    /// <summary>Rebuild clusters from a fresh assignment. The caller is
+    /// responsible for carrying over any librarian-assigned names/summaries
+    /// (cluster ids are renumbered on every reindex, so they cannot be matched
+    /// by id here — see <see cref="NoteService.Reindex"/>).</summary>
+    public void ReplaceClusters(IReadOnlyList<(long clusterId, string name, string color, string summary)> clusters,
                                 IReadOnlyDictionary<long, long> noteToCluster)
     {
         lock (_lock)
@@ -288,13 +290,14 @@ CREATE TABLE IF NOT EXISTS suggestions(
             Run("DELETE FROM clusters;");
             using (var ins = _conn.CreateCommand())
             {
-                ins.CommandText = "INSERT INTO clusters(id,name,color,summary) VALUES($id,$n,$c,'');";
+                ins.CommandText = "INSERT INTO clusters(id,name,color,summary) VALUES($id,$n,$c,$s);";
                 var pid = ins.Parameters.Add("$id", SqliteType.Integer);
                 var pn = ins.Parameters.Add("$n", SqliteType.Text);
                 var pc = ins.Parameters.Add("$c", SqliteType.Text);
-                foreach (var (cid, name, color) in clusters)
+                var ps = ins.Parameters.Add("$s", SqliteType.Text);
+                foreach (var (cid, name, color, summary) in clusters)
                 {
-                    pid.Value = cid; pn.Value = name; pc.Value = color;
+                    pid.Value = cid; pn.Value = name; pc.Value = color; ps.Value = summary;
                     ins.ExecuteNonQuery();
                 }
             }
@@ -607,6 +610,16 @@ CREATE TABLE IF NOT EXISTS suggestions(
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = sql;
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Flush the WAL back into the main db file so an out-of-process
+    /// copy (e.g. export) sees all committed writes. Best-effort.</summary>
+    public void Checkpoint()
+    {
+        lock (_lock)
+        {
+            try { Exec("PRAGMA wal_checkpoint(TRUNCATE);"); } catch { /* best effort */ }
+        }
     }
 
     public void Dispose() => _conn.Dispose();

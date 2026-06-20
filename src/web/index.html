@@ -3,6 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Lock the page down: only same-origin scripts run (no inline/eval), so
+       even if unsanitized content slipped through it couldn't execute JS.
+       Inline styles are allowed for dynamic cluster-colour swatches only. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; frame-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'" />
   <title>engram</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -86,6 +90,7 @@
 
   <script src="vendor/force-graph.min.js"></script>
   <script src="vendor/marked.min.js"></script>
+  <script src="vendor/purify.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -50,6 +50,14 @@ internal static class SelfTest
             foreach (var c in graph.clusters)
                 sb.AppendLine($"  [{c.id}] {c.name} ({c.count})");
 
+            // Cluster-name persistence: a librarian-style name + summary applied
+            // to a cluster must survive subsequent reindexes (every capture/import
+            // renumbers cluster ids). Apply one now and re-check at the end.
+            const string keepName = "MY FINANCE BRAIN";
+            const string keepSummary = "What I know about accounting.";
+            var biggest = graph.clusters.OrderByDescending(c => c.count).First();
+            db.SetClusterMeta(biggest.id, keepName, keepSummary);
+
             sb.AppendLine();
             sb.AppendLine("search 'amortization of asset value':");
             foreach (var h in notes.Search("amortization of asset value", 3))
@@ -100,8 +108,17 @@ internal static class SelfTest
             sb.AppendLine();
             sb.AppendLine($"resurface        : {dueBefore} due → {dueAfter} after rating one 'good'");
 
+            // After all the captures/imports above (each triggers a reindex), the
+            // custom cluster name + summary applied earlier must still be present.
+            var afterClusters = db.GetClusters();
+            var kept = afterClusters.FirstOrDefault(c => c.name == keepName);
+            bool namePersisted = kept is not null && kept.summary == keepSummary;
+            sb.AppendLine();
+            sb.AppendLine($"name persistence : '{keepName}' survived {(namePersisted ? "yes" : "NO")} " +
+                          $"(across reindexes; summary intact = {kept?.summary == keepSummary})");
+
             bool ok = after > before && imp.notes >= 4 && localCount == 3 && milkDone
-                      && dueBefore > 0 && dueAfter == dueBefore - 1;
+                      && dueBefore > 0 && dueAfter == dueBefore - 1 && namePersisted;
             sb.AppendLine();
             sb.AppendLine(ok ? "RESULT: PASS" : "RESULT: FAIL");
         }
